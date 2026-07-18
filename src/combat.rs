@@ -213,7 +213,7 @@ pub fn firing_system(
     p.cooldown = 1.0 / w.rate;
 
     let angle = p.angle;
-    let muzzle = pos + Vec2::new(angle.cos(), angle.sin()) * 18.0;
+    let muzzle = pos + Vec2::new(angle.cos(), angle.sin()) * 26.0;
 
     if w.kind == WeaponKind::Melee {
         p.swing_dur = 0.22;
