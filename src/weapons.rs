@@ -8,6 +8,23 @@ pub enum WeaponKind {
     Launcher,
 }
 
+impl WeaponKind {
+    /// Stable slot index for per-kind weapon visuals.
+    pub fn index(self) -> usize {
+        match self {
+            WeaponKind::Melee => 0,
+            WeaponKind::Pistol => 1,
+            WeaponKind::Smg => 2,
+            WeaponKind::Shotgun => 3,
+            WeaponKind::Rifle => 4,
+            WeaponKind::Launcher => 5,
+        }
+    }
+}
+
+/// Number of distinct weapon-kind visual slots.
+pub const WEAPON_KINDS: usize = 6;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Ammo {
     None,
