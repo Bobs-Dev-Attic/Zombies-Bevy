@@ -4,6 +4,23 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.17.0]
+
+### Added
+- **Minimap** — a corner map of the arena showing the walls, your position
+  (green), the objective (yellow) and nearby zombies (red).
+- **Objective + direction indicator** — you're now sent to an **extraction
+  point**: a banner shows the distance, a floating **arrow** by the player points
+  the way, and the minimap marks it. Reach it and the next one is set.
+
+### Changed
+- **Zombie arms** hang from **under the shoulders** and spread **wider** to the
+  sides.
+- **Crawler arms crawl** — a dragging zombie now hauls itself along, each arm
+  reaching out ahead and pulling back in turn.
+- **Wider player collider** — the body keeps more distance from walls so the
+  arms and gun don't bury into them.
+
 ## [0.16.0]
 
 ### Added

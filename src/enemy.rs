@@ -489,7 +489,7 @@ pub fn zombie_ai(
 
         // Don't occupy the player's space: keep at least (z.r + player r) away,
         // sliding the zombie to the edge of the player's body if it pushed in.
-        let sep = z.r + 11.0;
+        let sep = z.r + 15.0;
         let to_p = ppos - resolved;
         let dp = to_p.length();
         if dp < sep && dp > 0.001 {
@@ -503,7 +503,7 @@ pub fn zombie_ai(
 
         // Melee the player.
         let pd = (ppos - resolved).length();
-        if pd < z.r + 11.0 + 2.0 && z.attack_cd <= 0.0 {
+        if pd < z.r + 15.0 + 2.0 && z.attack_cd <= 0.0 {
             player_hurt += z.dmg * (0.55 + 0.45 * hp_frac);
             z.attack_cd = 0.7;
             let a = (ppos - resolved).y.atan2((ppos - resolved).x);
