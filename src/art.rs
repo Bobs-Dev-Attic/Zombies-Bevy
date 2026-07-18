@@ -16,6 +16,8 @@ pub const PLAYER_SKIN: Color = Color::srgb(0.33, 0.23, 0.18);
 pub struct Art {
     pub circle: Handle<Image>,
     pub soft: Handle<Image>,
+    /// White rounded rectangle for softly-cornered body parts.
+    pub rounded: Handle<Image>,
     /// Red edge-vignette (transparent centre → opaque edges) for the hurt flash.
     pub vignette: Handle<Image>,
 }
@@ -147,11 +149,44 @@ fn make_vignette(images: &mut Assets<Image>, size: u32) -> Handle<Image> {
     ))
 }
 
+/// A white rounded rectangle (corner radius = `radius_frac` of the half-size).
+fn make_rounded_rect(images: &mut Assets<Image>, size: u32, radius_frac: f32) -> Handle<Image> {
+    let mut data = vec![0u8; (size * size * 4) as usize];
+    let half = (size as f32 - 1.0) / 2.0;
+    let r = radius_frac * half;
+    for y in 0..size {
+        for x in 0..size {
+            let px = x as f32 - half;
+            let py = y as f32 - half;
+            // Signed distance to a rounded box centred at the origin.
+            let qx = px.abs() - (half - r);
+            let qy = py.abs() - (half - r);
+            let ox = qx.max(0.0);
+            let oy = qy.max(0.0);
+            let d = (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - r;
+            let a = (0.5 - d).clamp(0.0, 1.0);
+            let i = ((y * size + x) * 4) as usize;
+            data[i] = 255;
+            data[i + 1] = 255;
+            data[i + 2] = 255;
+            data[i + 3] = (a * 255.0) as u8;
+        }
+    }
+    images.add(Image::new(
+        Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    ))
+}
+
 pub fn setup_art(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let circle = make_circle(&mut images, 48);
     let soft = make_soft(&mut images, 96);
+    let rounded = make_rounded_rect(&mut images, 64, 0.45);
     let vignette = make_vignette(&mut images, 128);
-    commands.insert_resource(Art { circle, soft, vignette });
+    commands.insert_resource(Art { circle, soft, rounded, vignette });
 }
 
 fn ellipse(art: &Art, color: Color, w: f32, h: f32, z: f32) -> impl Bundle {
@@ -169,6 +204,19 @@ fn ellipse(art: &Art, color: Color, w: f32, h: f32, z: f32) -> impl Bundle {
 fn rect(color: Color, w: f32, h: f32, z: f32) -> impl Bundle {
     (
         Sprite::from_color(color, Vec2::new(w, h)),
+        Transform::from_xyz(0.0, 0.0, z),
+    )
+}
+
+/// A rectangle with softly rounded corners.
+fn rrect(art: &Art, color: Color, w: f32, h: f32, z: f32) -> impl Bundle {
+    (
+        Sprite {
+            image: art.rounded.clone(),
+            color,
+            custom_size: Some(Vec2::new(w, h)),
+            ..default()
+        },
         Transform::from_xyz(0.0, 0.0, z),
     )
 }
@@ -252,21 +300,22 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let leg_l = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
     let leg_r = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
 
-    // ---- Torso built from blocky squares/rectangles (t-shirt) ----
+    // ---- Torso: rectangular body with softly rounded back & shoulders ----
     // The main body block is `torso` (recoloured on hit); the rest are detail.
-    let torso = commands.spawn(rect(shirt, 20.0, 18.0, 0.0)).id();
-    let back_block = commands.spawn(rect(shirt_dark, 8.0, 18.0, -0.01)).id();
-    commands.entity(back_block).insert(Transform::from_xyz(-7.0, 0.0, -0.01));
-    let chest = commands.spawn(rect(shirt_hi, 11.0, 12.0, 0.02)).id();
+    let torso = commands.spawn(rrect(art, shirt, 21.0, 19.0, 0.0)).id();
+    // Rounded back/upper-back hump.
+    let back_block = commands.spawn(rrect(art, shirt_dark, 12.0, 19.0, -0.01)).id();
+    commands.entity(back_block).insert(Transform::from_xyz(-6.0, 0.0, -0.01));
+    let chest = commands.spawn(rrect(art, shirt_hi, 11.0, 12.0, 0.02)).id();
     commands.entity(chest).insert(Transform::from_xyz(3.0, 0.0, 0.02));
-    // Short t-shirt sleeve caps at the shoulders.
-    let shoulder_l = commands.spawn(rect(shirt, 6.0, 7.0, 0.03)).id();
-    commands.entity(shoulder_l).insert(Transform::from_xyz(2.0, 8.5, 0.03));
-    let shoulder_r = commands.spawn(rect(shirt, 6.0, 7.0, 0.03)).id();
-    commands.entity(shoulder_r).insert(Transform::from_xyz(2.0, -8.5, 0.03));
-    // Crew-neck collar.
-    let collar = commands.spawn(rect(skin, 5.0, 9.0, 0.04)).id();
-    commands.entity(collar).insert(Transform::from_xyz(8.0, 0.0, 0.04));
+    // Rounded shoulders.
+    let shoulder_l = commands.spawn(rrect(art, shirt, 8.0, 9.0, 0.03)).id();
+    commands.entity(shoulder_l).insert(Transform::from_xyz(1.0, 9.0, 0.03));
+    let shoulder_r = commands.spawn(rrect(art, shirt, 8.0, 9.0, 0.03)).id();
+    commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -9.0, 0.03));
+    // Crew-neck collar (rounded).
+    let collar = commands.spawn(ellipse(art, skin, 6.0, 8.0, 0.04)).id();
+    commands.entity(collar).insert(Transform::from_xyz(7.5, 0.0, 0.04));
 
     // Body-armour plate carrier (toggled on when equipped).
     let armor_root = commands.spawn((Transform::default(), Visibility::Hidden)).id();
@@ -289,52 +338,67 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         .entity(torso)
         .add_children(&[back_block, chest, shoulder_l, shoulder_r, collar, armor_root]);
 
-    // ---- Arms: short t-shirt sleeve (upper arm) then a BARE skin forearm,
-    // two segments hinged at a circular elbow, ending in a circular hand.
-    // `bend` angles the forearm inward so both hands meet the gun. ----
+    // ---- Arms: big, long, fully bare (skin) two-segment limbs hinged at a
+    // rounded elbow, ending in a fist. `bend` angles the forearm inward so both
+    // hands meet the gun. Rounded rects so the arms read as muscle, not planks. ----
     let build_arm = |commands: &mut Commands, bend: f32| -> Entity {
         let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
-        let l1 = 6.0; // short sleeve (upper arm)
-        let l2 = 8.5; // bare forearm
+        let l1 = 8.5; // upper arm (longer)
+        let l2 = 10.5; // forearm (longer)
+        let w = 6.6; // thicker
 
-        // Sleeve near the shoulder, then bare (skin) upper arm.
-        let sleeve = commands.spawn(rect(shirt, 4.0, 5.6, 0.1)).id();
-        commands.entity(sleeve).insert(Transform::from_xyz(2.0, 0.0, 0.11));
-        let upper = commands.spawn(rect(skin, l1, 5.2, 0.1)).id();
+        let upper = commands.spawn(rrect(art, skin, l1, w, 0.1)).id();
         commands.entity(upper).insert(Transform::from_xyz(l1 * 0.5, 0.0, 0.1));
         // Elbow joint — a circle.
-        let elbow = commands.spawn(ellipse(art, skin_dark, 6.0, 6.0, 0.12)).id();
+        let elbow = commands.spawn(ellipse(art, skin, w * 1.05, w * 1.05, 0.12)).id();
         commands.entity(elbow).insert(Transform::from_xyz(l1, 0.0, 0.12));
 
-        // Bare forearm pivots at the elbow and bends inward.
+        // Forearm pivots at the elbow and bends inward.
         let forearm_pivot = commands
             .spawn((
                 Transform::from_xyz(l1, 0.0, 0.0).with_rotation(Quat::from_rotation_z(bend)),
                 Visibility::default(),
             ))
             .id();
-        let forearm = commands.spawn(rect(skin, l2, 5.0, 0.1)).id();
+        let forearm = commands.spawn(rrect(art, skin, l2, w * 0.92, 0.1)).id();
         commands.entity(forearm).insert(Transform::from_xyz(l2 * 0.5, 0.0, 0.1));
-        let hand = commands.spawn(ellipse(art, skin_dark, 5.8, 5.8, 0.13)).id();
+        let hand = commands.spawn(ellipse(art, skin_dark, 7.0, 7.0, 0.13)).id();
         commands.entity(hand).insert(Transform::from_xyz(l2 + 1.0, 0.0, 0.13));
         commands.entity(forearm_pivot).add_children(&[forearm, hand]);
 
         commands
             .entity(pivot)
-            .add_children(&[sleeve, upper, elbow, forearm_pivot]);
+            .add_children(&[upper, elbow, forearm_pivot]);
         pivot
     };
     // Right/gun arm bends up toward centre; left arm bends down toward centre.
-    let arm_l = build_arm(commands, -0.5);
-    let arm_r = build_arm(commands, 0.5);
+    let arm_l = build_arm(commands, -0.42);
+    let arm_r = build_arm(commands, 0.42);
 
-    // ---- Head, with swappable headgear roots ----
-    let head = commands.spawn(ellipse(art, skin, 14.5, 14.5, 0.25)).id();
-    let brow = commands.spawn(ellipse(art, skin_dark, 12.0, 5.0, 0.255)).id();
-    commands.entity(brow).insert(Transform::from_xyz(2.0, 0.0, 0.255));
-    // Short hair, shown only when bare-headed (peeks from behind the face).
-    let hair = commands.spawn(ellipse(art, Color::srgb(0.12, 0.09, 0.07), 15.0, 14.0, -0.06)).id();
-    commands.entity(hair).insert(Transform::from_xyz(-3.0, 0.0, -0.06));
+    // ---- Head (smaller, sits at the player's centre) with headgear roots ----
+    let head = commands.spawn(ellipse(art, skin, 11.0, 11.0, 0.25)).id();
+    let brow = commands.spawn(ellipse(art, skin_dark, 9.0, 3.6, 0.255)).id();
+    commands.entity(brow).insert(Transform::from_xyz(1.5, 0.0, 0.255));
+
+    // Designed hair (shown only when bare-headed): a rounded crown that covers
+    // the back and top of the head, with a couple of tufts, so the face peeks
+    // out the front.
+    let hair_col = Color::srgb(0.14, 0.10, 0.07);
+    let hair_dark = Color::srgb(0.09, 0.06, 0.05);
+    let hair = commands.spawn((Transform::default(), Visibility::default())).id();
+    let hair_crown = commands.spawn(ellipse(art, hair_col, 13.0, 12.5, -0.06)).id();
+    commands.entity(hair_crown).insert(Transform::from_xyz(-2.2, 0.0, -0.06));
+    let hair_top = commands.spawn(ellipse(art, hair_col, 10.5, 12.0, 0.30)).id();
+    commands.entity(hair_top).insert(Transform::from_xyz(-2.8, 0.0, 0.30));
+    let tuft_a = commands.spawn(ellipse(art, hair_dark, 4.0, 4.5, 0.31)).id();
+    commands.entity(tuft_a).insert(Transform::from_xyz(-6.0, 2.5, 0.31));
+    let tuft_b = commands.spawn(ellipse(art, hair_dark, 4.0, 4.5, 0.31)).id();
+    commands.entity(tuft_b).insert(Transform::from_xyz(-6.0, -2.5, 0.31));
+    let fringe = commands.spawn(rrect(art, hair_col, 3.0, 9.0, 0.31)).id();
+    commands.entity(fringe).insert(Transform::from_xyz(2.2, 0.0, 0.31));
+    commands
+        .entity(hair)
+        .add_children(&[hair_crown, hair_top, tuft_a, tuft_b, fringe]);
 
     // Soft padded cap (default; no protection).
     let cap_root = commands.spawn((Transform::default(), Visibility::default())).id();
@@ -485,6 +549,21 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
     });
 }
 
+/// Chest fullness (0..1) over one breath cycle: quick inhale, brief hold,
+/// slower exhale, then a short rest at empty — an organic, rhythmic curve.
+fn breath_curve(phase: f32) -> f32 {
+    let ss = |t: f32| t * t * (3.0 - 2.0 * t);
+    if phase < 0.30 {
+        ss(phase / 0.30)
+    } else if phase < 0.42 {
+        1.0
+    } else if phase < 0.85 {
+        1.0 - ss((phase - 0.42) / 0.43)
+    } else {
+        0.0
+    }
+}
+
 fn mix(a: Color, b: Color, t: f32) -> Color {
     let a = a.to_srgba();
     let b = b.to_srgba();
@@ -533,14 +612,17 @@ pub fn animate_player(
             t.rotation = Quat::from_rotation_z((p.walk_frame).sin() * sway);
         }
         if let Ok(mut h) = tf_q.get_mut(rig.head) {
-            h.translation.x = 4.0;
-            h.translation.y = bob * 0.7;
+            h.translation.x = 0.0; // head sits at the player's centre
+            h.translation.y = bob * 0.5;
         }
     } else {
-        // Idle: breathing. Rate + depth rise as stamina drops (and when winded).
-        let rate = 1.6 + (1.0 - stamina_frac) * 5.5 + if p.exhausted { 2.5 } else { 0.0 };
-        let depth = 0.03 + (1.0 - stamina_frac) * 0.06;
-        let breath = (p.idle_t * rate).sin();
+        // Idle: rhythmic breathing. A steady breaths-per-second cadence (faster
+        // and deeper as stamina drops) with a shaped inhale/hold/exhale/rest —
+        // not a plain sine.
+        let bps = 0.28 + (1.0 - stamina_frac) * 0.55 + if p.exhausted { 0.35 } else { 0.0 };
+        let phase = (p.idle_t * bps).fract();
+        let fullness = breath_curve(phase); // 0 (empty) .. 1 (full chest)
+        let depth = 0.05 + (1.0 - stamina_frac) * 0.08;
         if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
             l.translation.x = -3.0;
             l.translation.y = 5.0;
@@ -550,13 +632,14 @@ pub fn animate_player(
             r.translation.y = -5.0;
         }
         if let Ok(mut t) = tf_q.get_mut(rig.torso) {
-            t.translation.y = breath * 0.6;
-            t.scale = Vec3::new(1.0, 1.0 + breath * depth, 1.0);
+            // Chest swells on the inhale and settles on the exhale.
+            t.scale = Vec3::splat(1.0 + fullness * depth);
+            t.translation.y = fullness * 0.7;
             t.rotation = Quat::IDENTITY;
         }
         if let Ok(mut h) = tf_q.get_mut(rig.head) {
-            h.translation.x = 4.0;
-            h.translation.y = breath * 0.8;
+            h.translation.x = 0.0;
+            h.translation.y = fullness * 0.6;
         }
     }
 
@@ -566,16 +649,17 @@ pub fn animate_player(
     let recoil = p.recoil;
     // Arms are shoulder pivots at the shoulders; the forearm bend (baked in)
     // brings both hands onto the gun. We drive the shoulder position + rotation.
+    // Shoulders sit just behind centre; the long arms reach forward to the gun.
     if melee {
         // swing arc
         let sw = if p.swing_dur > 0.0 { p.swing_t / p.swing_dur } else { 0.0 };
         let swing = (1.0 - sw) * 1.4 - 0.7; // sweeps across
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(4.5, -5.0, 0.1);
+            a.translation = Vec3::new(-1.0, -5.0, 0.1);
             a.rotation = Quat::from_rotation_z(swing);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(4.5, 5.0, 0.1);
+            a.translation = Vec3::new(-1.0, 5.0, 0.1);
             a.rotation = Quat::from_rotation_z(swing * 0.6);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
@@ -586,11 +670,11 @@ pub fn animate_player(
         // Two-handed pistol grip pushed out in front, recoiling backward on fire.
         let back = recoil * 5.0;
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(4.5 - back, -5.0, 0.1);
+            a.translation = Vec3::new(-1.0 - back, -5.0, 0.1);
             a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(4.5 - back, 5.0, 0.1);
+            a.translation = Vec3::new(-1.0 - back, 5.0, 0.1);
             a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {

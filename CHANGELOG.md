@@ -4,6 +4,17 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.8.0]
+
+### Changed
+- **Player redesign** — smaller head that now sits at the player's exact centre;
+  designed hair (crown + tufts + fringe) shown by default since you start
+  bare-headed; bigger, longer, fully skin-toned arms; and softly **rounded back
+  and shoulders** (new rounded-rectangle sprites).
+- **Breathing is more rhythmic** — the idle breath now follows a shaped
+  inhale / hold / exhale / rest cycle at a steady cadence (faster and deeper as
+  stamina drops) instead of a plain sine wobble.
+
 ## [0.7.0]
 
 ### Added
