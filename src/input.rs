@@ -1,4 +1,5 @@
 use crate::camera::MainCamera;
+use bevy::input::mouse::MouseWheel;
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 
@@ -39,6 +40,7 @@ pub struct TouchSticks;
 pub fn gather_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut wheel: EventReader<MouseWheel>,
     touches: Res<Touches>,
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
@@ -140,6 +142,13 @@ pub fn gather_input(
     input.reload = keys.just_pressed(KeyCode::KeyR);
     input.throw = keys.just_pressed(KeyCode::KeyG) || keys.just_pressed(KeyCode::KeyF);
     input.next_weapon = keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::KeyQ);
+    // Mouse scroll wheel cycles weapons: scroll down → next, scroll up → previous.
+    let scroll: f32 = wheel.read().map(|e| e.y).sum();
+    if scroll < -0.01 {
+        input.next_weapon = true;
+    } else if scroll > 0.01 {
+        input.prev_weapon = true;
+    }
     for (i, k) in [
         KeyCode::Digit1,
         KeyCode::Digit2,

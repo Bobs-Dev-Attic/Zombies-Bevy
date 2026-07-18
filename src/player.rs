@@ -62,6 +62,7 @@ pub struct Player {
     pub muzzle: f32,
     pub invuln: f32,
     pub recoil: f32,
+    pub stun: f32, // knocked-out/concussed timer — no control while > 0
     pub swing_t: f32,
     pub swing_dur: f32,
     pub kills: u32,
@@ -109,6 +110,7 @@ impl Default for Player {
             muzzle: 0.0,
             invuln: 0.0,
             recoil: 0.0,
+            stun: 0.0,
             swing_t: 0.0,
             swing_dur: 0.22,
             kills: 0,
@@ -284,6 +286,35 @@ pub fn player_update(
     p.recoil = (p.recoil - dt * 7.0).max(0.0);
     p.swing_t = (p.swing_t - dt).max(0.0);
     p.armor_flash = (p.armor_flash - dt).max(0.0);
+
+    // Concussed / knocked out by a nearby blast: no control, but the shockwave's
+    // knockback still carries the body (velocity decays), and cooldowns tick.
+    if p.stun > 0.0 {
+        p.stun = (p.stun - dt).max(0.0);
+        p.moving = false;
+        p.running = false;
+        let vel = p.vel;
+        p.vel = vel * (1.0 - (dt * 4.0).clamp(0.0, 1.0));
+        let cur = tf.translation.truncate();
+        let next = cur + p.vel * dt;
+        let resolved = world.collide(next, p.r);
+        tf.translation.x = resolved.x;
+        tf.translation.y = resolved.y;
+        tf.translation.z = depth_z(Z_CHAR, resolved.y);
+        p.cooldown = (p.cooldown - dt).max(0.0);
+        if p.reloading > 0.0 {
+            p.reloading -= dt;
+            if p.reloading <= 0.0 {
+                p.reloading = 0.0;
+                p.finish_reload();
+            }
+        }
+        // Slow health regen still trickles.
+        if p.health > 0.0 && p.health < p.max_health {
+            p.health = (p.health + 0.6 * dt).min(p.max_health);
+        }
+        return;
+    }
 
     // Weapon switching.
     // (handled here so state is centralized)

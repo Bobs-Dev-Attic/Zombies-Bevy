@@ -998,20 +998,50 @@ pub fn animate_player(
     // Arms are shoulder pivots at the shoulders; the forearm bend (baked in)
     // brings both hands onto the gun. We drive the shoulder position + rotation.
     if melee {
-        // swing arc
-        let sw = if p.swing_dur > 0.0 { p.swing_t / p.swing_dur } else { 0.0 };
-        let swing = (1.0 - sw) * 1.4 - 0.7; // sweeps across
+        // Cleaver grip: the knife is held in the RIGHT hand like a butcher's
+        // cleaver, right arm slightly bent, blade poised across the chest ready
+        // to sweep. The left arm is bent out with the hand resting near the
+        // waist. A strike whips the knife out and across the chest and back.
+        let sw = if p.swing_dur > 0.0 {
+            (p.swing_t / p.swing_dur).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let arc = (sw * std::f32::consts::PI).sin(); // 0 at rest, 1 mid-sweep
+        // Right/knife arm: poised across the chest, sweeping further across mid-swing.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(1.0, -7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(swing);
+            a.translation = Vec3::new(2.0, -6.0, 0.1);
+            a.rotation = Quat::from_rotation_z(0.55 + arc * 0.85);
         }
+        // Left arm: bent out, hand near the waist (elbow fold applied below).
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(1.0, 7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(swing * 0.6);
+            a.translation = Vec3::new(-1.0, 6.5, 0.1);
+            a.rotation = Quat::from_rotation_z(1.2);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            wt.translation = Vec3::new(12.0, -3.0, 0.15);
-            wt.rotation = Quat::from_rotation_z(swing);
+            // Cleaver in the right hand: blade angled across the chest, whipping
+            // forward-and-across on the swing.
+            wt.translation = Vec3::new(11.0 + arc * 6.0, -4.0 + arc * 9.0, 0.15);
+            wt.rotation = Quat::from_rotation_z(0.95 - arc * 1.9);
+        }
+    } else if w.kind == WeaponKind::Launcher {
+        // Shoulder-mounted bazooka: the tube rests up on the RIGHT shoulder and
+        // points forward down the aim line. The right hand grips the trigger
+        // under the tube; the left hand steadies the tube out front.
+        let back = recoil * 5.0;
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+            a.translation = Vec3::new(1.0 - back, -7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.15);
+        }
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+            // Reaches across to brace the tube (which sits on the right).
+            a.translation = Vec3::new(1.0 - back, 6.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.6);
+        }
+        if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
+            // Tube hoisted onto the right shoulder, muzzle forward; kicks back on fire.
+            wt.translation = Vec3::new(12.0 - back, -6.0, 0.15);
+            wt.rotation = Quat::from_rotation_z(-0.05);
         }
     } else if w.kind == WeaponKind::Shotgun {
         // Shouldered pump shotgun. The barrel runs level along the aim line so it
@@ -1082,7 +1112,14 @@ pub fn animate_player(
     // Forearm (elbow) bends. Default to the baked resting bend; the shotgun folds
     // the elbows for its pump/trigger, and a mag-fed reload folds the right elbow
     // down so the hand reaches the magazine well under the grip.
-    let (fore_bend_l, mut fore_bend_r) = if matches!(w.kind, WeaponKind::Shotgun | WeaponKind::Sxs) {
+    let (fore_bend_l, mut fore_bend_r) = if melee {
+        // Left elbow folds hard to tuck the hand at the waist; right elbow keeps
+        // a slight bend so the cleaver stays cocked across the chest.
+        (-1.6, 0.7)
+    } else if w.kind == WeaponKind::Launcher {
+        // Left arm folds across to brace the tube; right elbow bent up to the grip.
+        (-1.1, 0.5)
+    } else if matches!(w.kind, WeaponKind::Shotgun | WeaponKind::Sxs) {
         (-1.26, 2.36)
     } else {
         (-0.42, 0.42)
@@ -1171,6 +1208,8 @@ pub fn animate_player(
     };
     if let Ok(mut ft) = tf_q.get_mut(rig.flash) {
         ft.translation.x = flash_x;
+        // The bazooka's muzzle sits over the right shoulder, so drop its flash.
+        ft.translation.y = if w.kind == WeaponKind::Launcher { -6.0 } else { 0.0 };
     }
     if let Ok(mut fs) = sprite_q.get_mut(rig.flash) {
         fs.custom_size = Some(Vec2::splat(flash_sz));
