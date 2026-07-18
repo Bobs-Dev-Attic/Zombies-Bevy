@@ -54,6 +54,14 @@ pub struct WeaponVisuals {
     pub shotgun_pump: Entity,
 }
 
+/// The player's two forearm (elbow) pivots, so poses can bend the arms — e.g.
+/// folding the elbows to bring the hands onto a shotgun's pump and trigger.
+#[derive(Component)]
+pub struct PlayerArms {
+    pub fore_l: Entity,
+    pub fore_r: Entity,
+}
+
 const RELOAD_TICKS: usize = 14;
 
 /// Entity handles to a character's body parts.
@@ -348,7 +356,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     // ---- Arms: big, long, fully bare (skin) two-segment limbs hinged at a
     // rounded elbow, ending in a fist. `bend` angles the forearm inward so both
     // hands meet the gun. Rounded rects so the arms read as muscle, not planks. ----
-    let build_arm = |commands: &mut Commands, bend: f32| -> Entity {
+    let build_arm = |commands: &mut Commands, bend: f32| -> (Entity, Entity) {
         let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
         let l1 = 12.5; // upper arm (longer)
         let l2 = 13.0; // forearm (longer)
@@ -378,11 +386,11 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         commands
             .entity(pivot)
             .add_children(&[upper, elbow, forearm_pivot]);
-        pivot
+        (pivot, forearm_pivot)
     };
     // Right/gun arm bends up toward centre; left arm bends down toward centre.
-    let arm_l = build_arm(commands, -0.42);
-    let arm_r = build_arm(commands, 0.42);
+    let (arm_l, fore_l) = build_arm(commands, -0.42);
+    let (arm_r, fore_r) = build_arm(commands, 0.42);
 
     // ---- Head (smaller, sits at the player's centre) with headgear roots ----
     let head = commands.spawn(ellipse(art, skin, 12.5, 12.5, 0.25)).id();
@@ -586,6 +594,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         pistol_mag,
         shotgun_pump,
     });
+    commands.entity(root).insert(PlayerArms { fore_l, fore_r });
 }
 
 fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie) {
@@ -736,12 +745,12 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 }
 
 pub fn animate_player(
-    player_q: Query<(&Player, &Rig, &WeaponVisuals)>,
+    player_q: Query<(&Player, &Rig, &WeaponVisuals, &PlayerArms)>,
     mut tf_q: Query<&mut Transform>,
     mut sprite_q: Query<&mut Sprite>,
     mut vis_q: Query<&mut Visibility>,
 ) {
-    let Ok((p, rig, wv)) = player_q.single() else {
+    let Ok((p, rig, wv, pa)) = player_q.single() else {
         return;
     };
     let angle = p.angle;
@@ -865,26 +874,23 @@ pub fn animate_player(
             wt.rotation = Quat::from_rotation_z(swing);
         }
     } else if w.kind == WeaponKind::Shotgun {
-        // Shouldered pump shotgun: the butt is tucked into the right armpit and
-        // the barrel angles up to centre. The left arm starts under the left
-        // shoulder and reaches forward to the fore-end (working the pump); the
-        // right arm is bent inward to the grip.
+        // Shouldered pump shotgun: butt held just in front of the right armpit,
+        // barrel angled up so its tip is centred. The left elbow folds to put the
+        // hand on the pump (working it as it racks); the right elbow cocks back so
+        // the hand sits at the trigger. (Forearm folds are applied below.)
         let back = recoil * 3.0;
         let pump = recoil.max(rack);
-        // Left/support hand: mounted under the left shoulder, forward on the
-        // fore-end, sliding back a little as the pump is racked.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(2.0 - pump * 3.0, 7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.12);
+            a.translation = Vec3::new(1.0 - pump * 3.0, 7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(0.05);
         }
-        // Right/trigger hand: mounted under the right shoulder, bent inward.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(2.0 - back, -7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(0.4);
+            a.translation = Vec3::new(1.0 - back, -7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-1.0);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            // Butt at the right armpit; barrel angled up so its tip is centred.
-            wt.translation = Vec3::new(6.0 - back, -6.5, 0.15);
+            // Butt in front of the right armpit; barrel angled up, tip centred.
+            wt.translation = Vec3::new(11.0 - back, -6.5, 0.15);
             wt.rotation = Quat::from_rotation_z(0.28);
         }
     } else {
@@ -906,6 +912,21 @@ pub fn animate_player(
             wt.translation = Vec3::new(24.0 - back, -2.0 * swap, 0.15);
             wt.rotation = Quat::from_rotation_z(-0.28 * swap);
         }
+    }
+
+    // Forearm (elbow) bends. Default to the baked resting bend that meets both
+    // hands on a normal gun; the shotgun folds the elbows harder so the hands
+    // land on its pump and trigger.
+    let (fore_bend_l, fore_bend_r) = if w.kind == WeaponKind::Shotgun {
+        (-1.1, 2.1)
+    } else {
+        (-0.42, 0.42)
+    };
+    if let Ok(mut f) = tf_q.get_mut(pa.fore_l) {
+        f.rotation = Quat::from_rotation_z(fore_bend_l);
+    }
+    if let Ok(mut f) = tf_q.get_mut(pa.fore_r) {
+        f.rotation = Quat::from_rotation_z(fore_bend_r);
     }
 
     // Shotgun pump slides back as it's racked (on fire and through the reload).
