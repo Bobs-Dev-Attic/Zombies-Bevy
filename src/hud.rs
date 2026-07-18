@@ -70,6 +70,11 @@ pub struct AimSliderFill;
 pub struct AimSliderHandle;
 #[derive(Component)]
 pub struct AimValueText;
+/// A Game-Settings toggle button and the label text inside it.
+#[derive(Component)]
+pub struct CheatButton(pub Cheat);
+#[derive(Component)]
+pub struct CheatStateText(pub Cheat);
 
 const PANEL: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
 const BTN_BG: Color = Color::srgb(0.16, 0.17, 0.22);
@@ -243,9 +248,101 @@ pub fn setup_options(mut commands: Commands, settings: Res<Settings>) {
                 TextColor(Color::srgb(0.5, 0.55, 0.6)),
                 Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
             ));
+            // ---- Game Settings (cheat toggles) ----
+            p.spawn((
+                Text::new("GAME SETTINGS"),
+                TextFont { font_size: 26.0, ..default() },
+                TextColor(Color::srgb(0.8, 0.8, 0.85)),
+                Node { margin: UiRect::top(Val::Px(18.0)), ..default() },
+            ));
+            for c in CHEATS {
+                cheat_row(p, c, settings.cheat(c));
+            }
             p.spawn((Node { margin: UiRect::top(Val::Px(6.0)), ..default() },));
             menu_button(p, "BACK", MenuButton::Back);
         });
+}
+
+const CHEAT_ON: Color = Color::srgb(0.20, 0.52, 0.30);
+const CHEAT_OFF: Color = Color::srgb(0.16, 0.17, 0.22);
+
+fn cheat_row(parent: &mut ChildSpawnerCommands, cheat: Cheat, on: bool) {
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: Val::Px(430.0),
+                height: Val::Px(44.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::horizontal(Val::Px(16.0)),
+                ..default()
+            },
+            BackgroundColor(if on { CHEAT_ON } else { CHEAT_OFF }),
+            BorderRadius::all(Val::Px(8.0)),
+            CheatButton(cheat),
+        ))
+        .with_children(|b| {
+            // Left: name + hint.
+            b.spawn((Node {
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },))
+                .with_children(|col| {
+                    col.spawn((
+                        Text::new(cheat.label()),
+                        TextFont { font_size: 20.0, ..default() },
+                        TextColor(Color::srgb(0.92, 0.94, 0.98)),
+                    ));
+                    col.spawn((
+                        Text::new(cheat.hint()),
+                        TextFont { font_size: 13.0, ..default() },
+                        TextColor(Color::srgb(0.62, 0.66, 0.72)),
+                    ));
+                });
+            // Right: ON / OFF state pill.
+            b.spawn((
+                Text::new(if on { "ON" } else { "OFF" }),
+                TextFont { font_size: 20.0, ..default() },
+                TextColor(if on {
+                    Color::srgb(0.6, 1.0, 0.72)
+                } else {
+                    Color::srgb(0.55, 0.58, 0.64)
+                }),
+                CheatStateText(cheat),
+            ));
+        });
+}
+
+/// Toggle Game-Settings cheats when their rows are clicked, and keep each row's
+/// colour + ON/OFF label in sync with the setting.
+pub fn options_cheats(
+    mut settings: ResMut<Settings>,
+    mut btn_q: Query<(&Interaction, &CheatButton, &mut BackgroundColor), Changed<Interaction>>,
+    mut label_q: Query<(&CheatStateText, &mut Text, &mut TextColor)>,
+) {
+    for (interaction, btn, mut bg) in btn_q.iter_mut() {
+        if *interaction == Interaction::Pressed {
+            settings.toggle_cheat(btn.0);
+        }
+        let on = settings.cheat(btn.0);
+        bg.0 = match (*interaction, on) {
+            (Interaction::Hovered, true) => Color::srgb(0.26, 0.62, 0.38),
+            (Interaction::Hovered, false) => BTN_BG_HOVER,
+            (_, true) => CHEAT_ON,
+            (_, false) => CHEAT_OFF,
+        };
+    }
+    // Refresh the ON/OFF text for every row (cheap; few rows).
+    for (tag, mut text, mut color) in label_q.iter_mut() {
+        let on = settings.cheat(tag.0);
+        **text = (if on { "ON" } else { "OFF" }).to_string();
+        color.0 = if on {
+            Color::srgb(0.6, 1.0, 0.72)
+        } else {
+            Color::srgb(0.55, 0.58, 0.64)
+        };
+    }
 }
 
 fn small_button(parent: &mut ChildSpawnerCommands, label: &str, adjust: AimAdjust) {

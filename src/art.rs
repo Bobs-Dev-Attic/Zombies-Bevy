@@ -63,6 +63,18 @@ pub struct PlayerArms {
     pub fore_r: Entity,
 }
 
+/// A zombie's articulated joint pivots. Arms and legs are two-segment limbs like
+/// the player's: a shoulder/hip pivot (stored on `Rig` as `arm_*`/`leg_*`) drives
+/// the upper segment, and these elbow/knee pivots bend the lower segment. Holding
+/// each joint separately is also the groundwork for limbs being shot off later.
+#[derive(Component)]
+pub struct ZombieLimbs {
+    pub fore_l: Entity, // left elbow pivot
+    pub fore_r: Entity, // right elbow pivot
+    pub shin_l: Entity, // left knee pivot
+    pub shin_r: Entity, // right knee pivot
+}
+
 const RELOAD_TICKS: usize = 14;
 
 /// Entity handles to a character's body parts.
@@ -638,18 +650,35 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
     let body = commands.spawn((Transform::default(), Visibility::default())).id();
     let mut extras: Vec<Entity> = Vec::new();
 
-    // ---- Legs (player-like proportions) ending in a foot; a missing leg is
-    // hidden and replaced by a short bloody stump with a nub of bone. ----
+    // ---- Legs: two-segment articulated limbs (hip → thigh → knee → shin →
+    // foot), player-like proportions. A missing leg hides the whole pivot and is
+    // replaced by a short bloody stump with a nub of bone. ----
     let shoe = darker(look.pants, 0.55);
-    let leg_l = commands.spawn(rect(look.pants, 8.0 * s, 5.5 * s, -0.2)).id();
-    let leg_r = commands.spawn(rect(look.pants, 8.0 * s, 5.5 * s, -0.2)).id();
-    // Feet at the toe of each leg (move with the leg as it strides).
-    let foot_l = commands.spawn(rect(shoe, 4.0 * s, 5.0 * s, -0.19)).id();
-    commands.entity(foot_l).insert(Transform::from_xyz(5.0 * s, 0.0, -0.19));
-    commands.entity(leg_l).add_child(foot_l);
-    let foot_r = commands.spawn(rect(shoe, 4.0 * s, 5.0 * s, -0.19)).id();
-    commands.entity(foot_r).insert(Transform::from_xyz(5.0 * s, 0.0, -0.19));
-    commands.entity(leg_r).add_child(foot_r);
+    let knee_col = darker(look.pants, 0.82);
+    // Returns (hip_pivot, knee_pivot). The limb is built extending +X (forward),
+    // matching the arms, so it strides fore/aft cleanly.
+    let build_leg = |commands: &mut Commands| -> (Entity, Entity) {
+        let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
+        let l1 = 6.0 * s; // thigh
+        let l2 = 5.5 * s; // shin
+        let w = 5.2 * s;
+        let thigh = commands.spawn(rect(look.pants, l1, w, -0.2)).id();
+        commands.entity(thigh).insert(Transform::from_xyz(l1 * 0.5, 0.0, -0.2));
+        let knee = commands.spawn(ellipse(art, knee_col, w, w, -0.19)).id();
+        commands.entity(knee).insert(Transform::from_xyz(l1, 0.0, -0.19));
+        let knee_pivot = commands
+            .spawn((Transform::from_xyz(l1, 0.0, 0.0), Visibility::default()))
+            .id();
+        let shin = commands.spawn(rect(look.pants, l2, w * 0.9, -0.2)).id();
+        commands.entity(shin).insert(Transform::from_xyz(l2 * 0.5, 0.0, -0.2));
+        let foot = commands.spawn(rect(shoe, 4.5 * s, 5.0 * s, -0.19)).id();
+        commands.entity(foot).insert(Transform::from_xyz(l2 + 1.5 * s, 0.0, -0.19));
+        commands.entity(knee_pivot).add_children(&[shin, foot]);
+        commands.entity(pivot).add_children(&[thigh, knee, knee_pivot]);
+        (pivot, knee_pivot)
+    };
+    let (leg_l, shin_l) = build_leg(commands);
+    let (leg_r, shin_r) = build_leg(commands);
     let mut stump = |commands: &mut Commands, x: f32, y: f32| {
         let st = commands.spawn(rect(look.skin, 4.0 * s, 5.0 * s, -0.19)).id();
         commands.entity(st).insert(Transform::from_xyz(x, y, -0.19));
@@ -685,10 +714,33 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         commands.entity(torso).add_children(&[wound, rib1, rib2]);
     }
 
-    // ---- Arms (bare skin, longer + thinner than the torso). A missing arm is
-    // hidden and replaced by a stump + bone. ----
-    let arm_l = commands.spawn(rect(look.skin, 13.0 * s, 4.5 * s, 0.1)).id();
-    let arm_r = commands.spawn(rect(look.skin, 13.0 * s, 4.5 * s, 0.1)).id();
+    // ---- Arms: two-segment articulated limbs (shoulder → upper arm → elbow →
+    // forearm → hand), bare skin, longer + thinner than the torso. A missing arm
+    // hides the whole pivot and is replaced by a stump + bone. ----
+    let hand_col = darker(look.skin, 0.78);
+    let elbow_col = darker(look.skin, 0.9);
+    let build_arm = |commands: &mut Commands| -> (Entity, Entity) {
+        let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
+        let l1 = 7.0 * s; // upper arm
+        let l2 = 6.5 * s; // forearm
+        let w = 4.4 * s;
+        let upper = commands.spawn(rrect(art, look.skin, l1, w, 0.1)).id();
+        commands.entity(upper).insert(Transform::from_xyz(l1 * 0.5, 0.0, 0.1));
+        let elbow = commands.spawn(ellipse(art, elbow_col, w, w, 0.12)).id();
+        commands.entity(elbow).insert(Transform::from_xyz(l1, 0.0, 0.12));
+        let fore_pivot = commands
+            .spawn((Transform::from_xyz(l1, 0.0, 0.0), Visibility::default()))
+            .id();
+        let forearm = commands.spawn(rrect(art, look.skin, l2, w * 0.88, 0.1)).id();
+        commands.entity(forearm).insert(Transform::from_xyz(l2 * 0.5, 0.0, 0.1));
+        let hand = commands.spawn(ellipse(art, hand_col, w * 1.15, w * 1.15, 0.13)).id();
+        commands.entity(hand).insert(Transform::from_xyz(l2 + 1.0 * s, 0.0, 0.13));
+        commands.entity(fore_pivot).add_children(&[forearm, hand]);
+        commands.entity(pivot).add_children(&[upper, elbow, fore_pivot]);
+        (pivot, fore_pivot)
+    };
+    let (arm_l, fore_l) = build_arm(commands);
+    let (arm_r, fore_r) = build_arm(commands);
     if look.missing_arm == 0 {
         commands.entity(arm_l).insert(Visibility::Hidden);
         let st = commands.spawn(rect(look.skin, 4.0 * s, 4.5 * s, 0.11)).id();
@@ -738,6 +790,12 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         leg_r,
         weapon,
         flash,
+    });
+    commands.entity(root).insert(ZombieLimbs {
+        fore_l,
+        fore_r,
+        shin_l,
+        shin_r,
     });
 }
 
@@ -1091,12 +1149,19 @@ pub fn animate_reload_ring(
     }
 }
 
+/// Set a joint pivot's bend (rotation about z), ignoring a missing entity.
+fn set_bend(tf_q: &mut Query<&mut Transform>, e: Entity, r: f32) {
+    if let Ok(mut t) = tf_q.get_mut(e) {
+        t.rotation = Quat::from_rotation_z(r);
+    }
+}
+
 pub fn animate_zombies(
-    zombies: Query<(&Zombie, &Rig)>,
+    zombies: Query<(&Zombie, &Rig, &ZombieLimbs)>,
     mut tf_q: Query<&mut Transform>,
     mut sprite_q: Query<&mut Sprite>,
 ) {
-    for (z, rig) in zombies.iter() {
+    for (z, rig, limbs) in zombies.iter() {
         let s = z.r / 12.0;
         let crawler = z.look.crawler;
         let moving = z.vel.length_squared() > 4.0;
@@ -1116,24 +1181,29 @@ pub fn animate_zombies(
 
         if crawler {
             // Dragging: the arms reach far forward and haul the body along while
-            // the legs trail limply behind.
+            // the legs trail limply behind, knees loose.
             let pull = (z.frame * 1.6).sin();
             if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-                a.translation = Vec3::new((11.0 + pull * 4.0) * s, 4.5 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(0.5 + pull * 0.3);
+                a.translation = Vec3::new(4.0 * s, 4.5 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(-0.15 + pull * 0.18);
             }
             if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-                a.translation = Vec3::new((11.0 - pull * 4.0) * s, -4.5 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(-0.5 - pull * 0.3);
+                a.translation = Vec3::new(4.0 * s, -4.5 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(0.15 - pull * 0.18);
             }
+            set_bend(&mut tf_q, limbs.fore_l, -0.1);
+            set_bend(&mut tf_q, limbs.fore_r, 0.1);
+            // Legs trail behind the body (pivots rotated to point backward).
             if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
-                l.translation = Vec3::new((-9.0 + stride * 1.5) * s, 3.5 * s, -0.2);
-                l.rotation = Quat::from_rotation_z(0.15);
+                l.translation = Vec3::new(-5.0 * s, 3.5 * s, -0.2);
+                l.rotation = Quat::from_rotation_z(std::f32::consts::PI + 0.12 + stride * 0.12);
             }
             if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
-                r.translation = Vec3::new((-9.0 - stride * 1.5) * s, -3.5 * s, -0.2);
-                r.rotation = Quat::from_rotation_z(-0.15);
+                r.translation = Vec3::new(-5.0 * s, -3.5 * s, -0.2);
+                r.rotation = Quat::from_rotation_z(std::f32::consts::PI - 0.12 - stride * 0.12);
             }
+            set_bend(&mut tf_q, limbs.shin_l, 0.3);
+            set_bend(&mut tf_q, limbs.shin_r, -0.3);
             if let Ok(mut h) = tf_q.get_mut(rig.head) {
                 h.translation.x = 6.0 * s;
                 h.translation.y = 0.0;
@@ -1141,38 +1211,43 @@ pub fn animate_zombies(
         } else {
             // Upright shamble. Missing a leg makes the gait limp (the good leg
             // works harder) and bobs the head.
-            let amp = 5.0 * s;
+            let amp = 4.0 * s;
             let limp_l = if z.look.missing_leg == 1 { 1.7 } else { 1.0 };
             let limp_r = if z.look.missing_leg == 0 { 1.7 } else { 1.0 };
+            // Hips scissor fore/aft; knees flex on the recovering leg so the
+            // stride reads as a jointed walk, not a stiff plank.
             if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
-                l.translation.x = -2.0 * s + stride * amp * limp_l;
+                l.translation.x = -3.0 * s + stride * amp * limp_l;
                 l.translation.y = 5.0 * s;
-                l.rotation = Quat::IDENTITY;
+                l.rotation = Quat::from_rotation_z(stride * 0.12);
             }
             if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
-                r.translation.x = -2.0 * s - stride * amp * limp_r;
+                r.translation.x = -3.0 * s - stride * amp * limp_r;
                 r.translation.y = -5.0 * s;
-                r.rotation = Quat::IDENTITY;
+                r.rotation = Quat::from_rotation_z(-stride * 0.12);
             }
+            set_bend(&mut tf_q, limbs.shin_l, -(0.18 + 0.32 * (-stride).max(0.0)));
+            set_bend(&mut tf_q, limbs.shin_r, -(0.18 + 0.32 * stride.max(0.0)));
+
             // Arms either swing fore/aft or reach out toward the player, varied
-            // per zombie (reach_style 0 = swing, ~1 = outstretched grasping).
+            // per zombie (reach_style 0 = swing, ~1 = outstretched grasping). The
+            // shoulder swings and the elbow bends, so both segments articulate.
             let rs = z.reach_style;
             let lerp = |a: f32, b: f32| a + (b - a) * rs;
-            let swing = (z.frame * 1.3).sin() * 3.0 * z.arm_amp;
-            let grasp = (z.frame * 2.2).sin() * 1.6; // twitchy grasp when reaching
-            // Left arm: swing pose vs reach-forward pose.
+            let swing = (z.frame * 1.3).sin() * 0.32 * z.arm_amp;
+            let grasp = (z.frame * 2.4).sin() * 0.14; // twitchy grasp when reaching
             if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-                let x = lerp(9.0 * s + swing, 14.0 * s + grasp);
-                let y = lerp(4.0 * s, 2.5 * s);
-                a.translation = Vec3::new(x, y, 0.1);
-                a.rotation = Quat::from_rotation_z(lerp(0.2, -0.35));
+                a.translation = Vec3::new(3.0 * s, 6.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(lerp(0.35 + swing, -0.12 + grasp));
             }
             if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-                let x = lerp(9.0 * s - swing, 14.0 * s - grasp);
-                let y = lerp(-4.0 * s, -2.5 * s);
-                a.translation = Vec3::new(x, y, 0.1);
-                a.rotation = Quat::from_rotation_z(lerp(-0.2, 0.35));
+                a.translation = Vec3::new(3.0 * s, -6.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(lerp(-0.35 - swing, 0.12 - grasp));
             }
+            // Elbows fold in when shambling, straighten out when reaching.
+            set_bend(&mut tf_q, limbs.fore_l, lerp(-0.85 - swing * 0.4, -0.2));
+            set_bend(&mut tf_q, limbs.fore_r, lerp(0.85 + swing * 0.4, 0.2));
+
             if let Ok(mut h) = tf_q.get_mut(rig.head) {
                 h.translation.x = 4.0 * s;
                 h.translation.y = if z.look.missing_leg >= 0 {

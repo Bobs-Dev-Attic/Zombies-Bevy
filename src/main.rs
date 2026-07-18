@@ -61,7 +61,10 @@ fn main() {
             Update,
             hud::menu_buttons.run_if(in_state(GameState::Menu).or(in_state(GameState::Options))),
         )
-        .add_systems(Update, hud::options_slider.run_if(in_state(GameState::Options)))
+        .add_systems(
+            Update,
+            (hud::options_slider, hud::options_cheats).run_if(in_state(GameState::Options)),
+        )
         .add_systems(
             Update,
             hud::press_any_key.run_if(in_state(GameState::GameOver)),
@@ -76,7 +79,10 @@ fn main() {
         .add_systems(
             Update,
             (
-                player::player_update,
+                (
+                    player::player_update,
+                    player::apply_cheats.after(player::player_update),
+                ),
                 combat::firing_system,
                 (
                     enemy::zombie_ai,
