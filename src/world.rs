@@ -140,8 +140,9 @@ pub fn generate_world() -> World {
 #[derive(Component)]
 pub struct WorldTile;
 
-/// Spawn floor + wall sprites once when the game starts.
-pub fn spawn_world_sprites(commands: &mut Commands, world: &World) {
+/// Spawn floor + wall sprites once when the game starts. `soft` is the shared
+/// radial-gradient texture used for soft cast shadows.
+pub fn spawn_world_sprites(commands: &mut Commands, world: &World, soft: &Handle<Image>) {
     let mut rng = rand::thread_rng();
     for r in 0..world.rows {
         for c in 0..world.cols {
@@ -192,13 +193,15 @@ pub fn spawn_world_sprites(commands: &mut Commands, world: &World) {
                 Cell::Wall => {
                     let shade = rng.gen_range(-0.02..0.02);
                     let wz = depth_z(Z_PROP, center.y);
-                    // Soft cast shadow on the ground below the wall for grounding.
+                    // Soft gradient cast shadow on the ground below the wall.
                     commands.spawn((
-                        Sprite::from_color(
-                            Color::srgba(0.0, 0.0, 0.0, 0.35),
-                            Vec2::new(TILE, TILE * 0.5),
-                        ),
-                        Transform::from_xyz(center.x + 4.0, center.y - TILE * 0.5, Z_DECAL + 5.0),
+                        Sprite {
+                            image: soft.clone(),
+                            color: Color::srgba(0.0, 0.0, 0.0, 0.42),
+                            custom_size: Some(Vec2::new(TILE * 1.25, TILE * 0.85)),
+                            ..default()
+                        },
+                        Transform::from_xyz(center.x + 5.0, center.y - TILE * 0.42, Z_DECAL + 5.0),
                         WorldTile,
                     ));
                     // Wall body (a brick/concrete block).

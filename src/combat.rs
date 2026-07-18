@@ -37,6 +37,35 @@ pub struct Decal {
     pub life: f32,
 }
 
+/// A brief burst of light at the muzzle that fades over a few frames.
+#[derive(Component)]
+pub struct MuzzleLight {
+    pub life: f32,
+    pub max: f32,
+    pub size: f32,
+}
+
+pub fn muzzle_light_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut MuzzleLight, &mut Sprite)>,
+) {
+    let dt = time.delta_secs();
+    for (e, mut m, mut sprite) in q.iter_mut() {
+        m.life -= dt;
+        if m.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        let t = (m.life / m.max).clamp(0.0, 1.0);
+        // Flare out quickly then fade.
+        let s = m.size * (1.0 + (1.0 - t) * 0.5);
+        sprite.custom_size = Some(Vec2::splat(s));
+        let base = sprite.color.to_srgba();
+        sprite.color = Color::srgba(base.red, base.green, base.blue, t * 0.85);
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct FireLatch(pub bool);
 
@@ -96,6 +125,7 @@ fn blood_burst(commands: &mut Commands, pos: Vec2, dir: f32, amount: u32) {
 pub fn firing_system(
     time: Res<Time>,
     input: Res<InputState>,
+    art: Res<crate::art::Art>,
     mut latch: ResMut<FireLatch>,
     mut shake: ResMut<Shake>,
     mut commands: Commands,
@@ -154,17 +184,45 @@ pub fn firing_system(
     shake.add(if w.explosive > 0.0 { 0.5 } else { 0.12 + w.knockback * 0.0006 });
 
     let mut rng = rand::thread_rng();
-    // eject a casing
-    let ca = angle + std::f32::consts::FRAC_PI_2 + rng.gen_range(-0.3..0.3);
-    spawn_particle(
-        &mut commands,
-        muzzle,
-        Vec2::new(ca.cos(), ca.sin()) * rng.gen_range(50.0..90.0),
-        Color::srgb(0.75, 0.6, 0.2),
-        2.0,
-        0.5,
-        0.0,
-    );
+    // Eject a casing to the side — flung a good distance with a little tumble.
+    {
+        let ca = angle + std::f32::consts::FRAC_PI_2 + rng.gen_range(-0.3..0.3);
+        let eject = pos + Vec2::new(angle.cos(), angle.sin()) * 12.0;
+        commands.spawn((
+            Sprite::from_color(Color::srgb(0.78, 0.62, 0.22), Vec2::new(3.0, 1.6)),
+            Transform {
+                translation: Vec3::new(eject.x, eject.y, Z_PARTICLE),
+                rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+                ..default()
+            },
+            Particle {
+                vel: Vec2::new(ca.cos(), ca.sin()) * rng.gen_range(150.0..260.0),
+                life: 0.9,
+                max_life: 0.9,
+                drag: 0.94,
+                gravity: 0.0,
+                base: Color::srgb(0.78, 0.62, 0.22),
+            },
+        ));
+    }
+
+    // Muzzle flash that briefly lights the surrounding scene.
+    let flash_color = if w.explosive > 0.0 {
+        Color::srgba(1.0, 0.6, 0.25, 0.9)
+    } else {
+        Color::srgba(1.0, 0.85, 0.5, 0.85)
+    };
+    let flash_size = if w.explosive > 0.0 { 190.0 } else { 120.0 };
+    commands.spawn((
+        Sprite {
+            image: art.soft.clone(),
+            color: flash_color,
+            custom_size: Some(Vec2::splat(flash_size)),
+            ..default()
+        },
+        Transform::from_xyz(muzzle.x, muzzle.y, Z_FX - 1.0),
+        MuzzleLight { life: 0.09, max: 0.09, size: flash_size },
+    ));
 
     for _ in 0..w.pellets {
         let a = angle + rng.gen_range(-w.spread..w.spread);

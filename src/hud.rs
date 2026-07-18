@@ -10,6 +10,13 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct Cleanup;
 #[derive(Component)]
+pub struct HurtVignette;
+/// Current strength of the red damage vignette (0..~0.9), decaying each frame.
+#[derive(Resource, Default)]
+pub struct HurtFx {
+    pub intensity: f32,
+}
+#[derive(Component)]
 pub struct MenuUi;
 #[derive(Component)]
 pub struct GameOverUi;
@@ -31,6 +38,13 @@ pub enum GearKind {
 }
 #[derive(Component)]
 pub struct GearRow(pub GearKind);
+
+#[derive(Component)]
+pub struct JoyBase;
+#[derive(Component)]
+pub struct JoyKnob;
+#[derive(Component)]
+pub struct AttackBtn;
 #[derive(Component)]
 pub struct AmmoText;
 #[derive(Component)]
@@ -73,7 +87,7 @@ pub fn setup_menu(mut commands: Commands) {
             ));
             p.spawn((
                 Text::new(
-                    "WASD move  •  Mouse aim  •  Click fire  •  Shift sprint\nR reload (auto when empty)  •  1-7 or E swap weapon  •  Mobile: dual touch sticks",
+                    "WASD move  •  Mouse aim  •  Click fire  •  Shift sprint\nR reload (auto when empty)  •  1-7 or E swap weapon  •  Mobile: on-screen stick + FIRE button",
                 ),
                 TextFont { font_size: 16.0, ..default() },
                 TextColor(Color::srgb(0.5, 0.55, 0.6)),
@@ -106,7 +120,7 @@ pub fn start_game(
     *spawner = crate::gear::PickupSpawner::default();
 
     let world = generate_world();
-    spawn_world_sprites_tagged(&mut commands, &world);
+    spawn_world_sprites(&mut commands, &world, &art.soft);
     let spawn = world.spawn;
     // Scatter starter gear before we hand the world to the ECS as a resource.
     crate::gear::scatter_pickups(&mut commands, &art, &world, spawn);
@@ -121,17 +135,94 @@ pub fn start_game(
         Cleanup,
     ));
 
-    spawn_hud(&mut commands);
+    spawn_hud(&mut commands, &art);
 }
 
-fn spawn_world_sprites_tagged(commands: &mut Commands, world: &World) {
-    // Wrap world sprites with the Cleanup tag by spawning then... simplest: spawn
-    // via the world module, then the tiles carry WorldTile — tag those. We instead
-    // re-implement by tagging at spawn time here.
-    spawn_world_sprites(commands, world);
-}
+fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
+    // Full-screen red damage vignette (transparent until the player is hit).
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        ImageNode {
+            image: art.vignette.clone(),
+            color: Color::srgba(0.85, 0.05, 0.05, 0.0),
+            ..default()
+        },
+        GlobalZIndex(30),
+        HurtVignette,
+        Cleanup,
+    ));
 
-fn spawn_hud(commands: &mut Commands) {
+    // ---- On-screen touch controls (hidden until touch is used) ----
+    use crate::input::{BTN_R, JOY_R, KNOB_R};
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(JOY_R * 2.0),
+            height: Val::Px(JOY_R * 2.0),
+            display: Display::None,
+            ..default()
+        },
+        ImageNode {
+            image: art.circle.clone(),
+            color: Color::srgba(0.8, 0.85, 0.95, 0.16),
+            ..default()
+        },
+        GlobalZIndex(60),
+        JoyBase,
+        Cleanup,
+    ));
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Px(KNOB_R * 2.0),
+            height: Val::Px(KNOB_R * 2.0),
+            display: Display::None,
+            ..default()
+        },
+        ImageNode {
+            image: art.circle.clone(),
+            color: Color::srgba(0.85, 0.9, 1.0, 0.45),
+            ..default()
+        },
+        GlobalZIndex(61),
+        JoyKnob,
+        Cleanup,
+    ));
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(BTN_R * 2.0),
+                height: Val::Px(BTN_R * 2.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                display: Display::None,
+                ..default()
+            },
+            ImageNode {
+                image: art.circle.clone(),
+                color: Color::srgba(0.85, 0.25, 0.2, 0.35),
+                ..default()
+            },
+            GlobalZIndex(60),
+            AttackBtn,
+            Cleanup,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new("FIRE"),
+                TextFont { font_size: 18.0, ..default() },
+                TextColor(Color::srgba(1.0, 0.95, 0.9, 0.8)),
+            ));
+        });
+
     // Health + stamina bars (top-left).
     commands
         .spawn((
@@ -335,6 +426,56 @@ pub fn update_hud(
         **t = format!("{}\nScore {}   Kills {}", phase, score.points, score.kills);
     }
     let _ = &Ammo::Rounds;
+}
+
+/// Drive the red edge vignette: spike on damage (scaled by amount), then fade.
+pub fn update_hurt_fx(
+    time: Res<Time>,
+    mut fx: ResMut<HurtFx>,
+    mut player_q: Query<&mut Player>,
+    mut vig_q: Query<&mut ImageNode, With<HurtVignette>>,
+) {
+    let dt = time.delta_secs();
+    if let Ok(mut p) = player_q.single_mut() {
+        if p.hurt_amount > 0.0 {
+            let add = (0.18 + p.hurt_amount / 20.0).clamp(0.0, 0.9);
+            fx.intensity = fx.intensity.max(add);
+            p.hurt_amount = 0.0;
+        }
+    }
+    fx.intensity = (fx.intensity - dt * 1.8).max(0.0);
+    if let Ok(mut img) = vig_q.single_mut() {
+        img.color = Color::srgba(0.85, 0.05, 0.05, fx.intensity);
+    }
+}
+
+/// Position and show/hide the on-screen touch controls.
+pub fn update_touch_controls(
+    input: Res<crate::input::InputState>,
+    mut base_q: Query<&mut Node, (With<JoyBase>, Without<JoyKnob>, Without<AttackBtn>)>,
+    mut knob_q: Query<&mut Node, (With<JoyKnob>, Without<JoyBase>, Without<AttackBtn>)>,
+    mut btn_q: Query<(&mut Node, &mut ImageNode), (With<AttackBtn>, Without<JoyBase>, Without<JoyKnob>)>,
+) {
+    use crate::input::{BTN_R, JOY_R, KNOB_R};
+    let show = input.touch_mode;
+    let disp = if show { Display::Flex } else { Display::None };
+    if let Ok(mut n) = base_q.single_mut() {
+        n.display = disp;
+        n.left = Val::Px(input.joy_base.x - JOY_R);
+        n.top = Val::Px(input.joy_base.y - JOY_R);
+    }
+    if let Ok(mut n) = knob_q.single_mut() {
+        n.display = disp;
+        n.left = Val::Px(input.knob.x - KNOB_R);
+        n.top = Val::Px(input.knob.y - KNOB_R);
+    }
+    if let Ok((mut n, mut img)) = btn_q.single_mut() {
+        n.display = disp;
+        n.left = Val::Px(input.attack_center.x - BTN_R);
+        n.top = Val::Px(input.attack_center.y - BTN_R);
+        let a = if input.attack_down { 0.6 } else { 0.32 };
+        img.color = Color::srgba(0.9, 0.28, 0.22, a);
+    }
 }
 
 pub fn setup_gameover(mut commands: Commands, score: Res<Score>) {

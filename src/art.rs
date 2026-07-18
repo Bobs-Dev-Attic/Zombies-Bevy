@@ -8,7 +8,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 /// Player body colours, shared between rig construction and the per-frame
 /// hurt-flash tint so the base always restores correctly.
-pub const PLAYER_JACKET: Color = Color::srgb(0.31, 0.35, 0.29);
+pub const PLAYER_SHIRT: Color = Color::srgb(0.34, 0.40, 0.52); // casual t-shirt
 pub const PLAYER_SKIN: Color = Color::srgb(0.33, 0.23, 0.18);
 
 /// Shared generated textures for soft circular shapes.
@@ -16,6 +16,8 @@ pub const PLAYER_SKIN: Color = Color::srgb(0.33, 0.23, 0.18);
 pub struct Art {
     pub circle: Handle<Image>,
     pub soft: Handle<Image>,
+    /// Red edge-vignette (transparent centre → opaque edges) for the hurt flash.
+    pub vignette: Handle<Image>,
 }
 
 /// Marker: this character needs its visual rig built.
@@ -97,7 +99,38 @@ fn make_soft(images: &mut Assets<Image>, size: u32) -> Handle<Image> {
             let dx = x as f32 - c;
             let dy = y as f32 - c;
             let d = ((dx * dx + dy * dy).sqrt() / rad).clamp(0.0, 1.0);
-            let a = (1.0 - d).powf(1.7);
+            // Smootherstep falloff → a soft, realistic radial gradient.
+            let s = 1.0 - (d * d * (3.0 - 2.0 * d));
+            let a = s.powf(1.3);
+            let i = ((y * size + x) * 4) as usize;
+            data[i] = 255;
+            data[i + 1] = 255;
+            data[i + 2] = 255;
+            data[i + 3] = (a * 255.0) as u8;
+        }
+    }
+    images.add(Image::new(
+        Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    ))
+}
+
+/// A full-frame vignette: transparent in the centre, ramping to opaque toward
+/// the edges/corners. White RGB so it can be tinted (red for the hurt flash).
+fn make_vignette(images: &mut Assets<Image>, size: u32) -> Handle<Image> {
+    let mut data = vec![0u8; (size * size * 4) as usize];
+    let c = (size as f32 - 1.0) / 2.0;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = (x as f32 - c) / c;
+            let dy = (y as f32 - c) / c;
+            let d = (dx * dx + dy * dy).sqrt().clamp(0.0, 1.0);
+            // Empty until ~45% out, then ramp up to the edge.
+            let t = ((d - 0.45) / 0.55).clamp(0.0, 1.0);
+            let a = t * t * (3.0 - 2.0 * t);
             let i = ((y * size + x) * 4) as usize;
             data[i] = 255;
             data[i + 1] = 255;
@@ -116,8 +149,9 @@ fn make_soft(images: &mut Assets<Image>, size: u32) -> Handle<Image> {
 
 pub fn setup_art(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let circle = make_circle(&mut images, 48);
-    let soft = make_soft(&mut images, 64);
-    commands.insert_resource(Art { circle, soft });
+    let soft = make_soft(&mut images, 96);
+    let vignette = make_vignette(&mut images, 128);
+    commands.insert_resource(Art { circle, soft, vignette });
 }
 
 fn ellipse(art: &Art, color: Color, w: f32, h: f32, z: f32) -> impl Bundle {
@@ -160,32 +194,31 @@ pub fn build_rigs(
 }
 
 fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
-    // Palette matched to the reference art: sage-green field jacket, dark skin,
-    // a padded olive hat, a bulky olive backpack, gunmetal pistol.
-    let jacket = PLAYER_JACKET;
-    let jacket_dark = Color::srgb(0.21, 0.25, 0.20);
-    let jacket_hi = Color::srgb(0.39, 0.44, 0.37);
+    // Starts casual: t-shirt, bare head, no pack. Helmet/olive/armour parts are
+    // still built but hidden until the matching gear is equipped.
+    let shirt = PLAYER_SHIRT;
+    let shirt_dark = Color::srgb(0.24, 0.28, 0.36);
+    let shirt_hi = Color::srgb(0.44, 0.50, 0.62);
     let skin = PLAYER_SKIN;
     let skin_dark = Color::srgb(0.24, 0.16, 0.12);
-    let pants = Color::srgb(0.17, 0.18, 0.15);
+    let pants = Color::srgb(0.17, 0.18, 0.20);
     let hat = Color::srgb(0.41, 0.39, 0.25);
     let hat_dark = Color::srgb(0.28, 0.27, 0.16);
     let pack = Color::srgb(0.40, 0.38, 0.24);
     let pack_dark = Color::srgb(0.26, 0.25, 0.15);
     let strap = Color::srgb(0.20, 0.19, 0.13);
-    let stitch = Color::srgb(0.15, 0.18, 0.14);
     let gun = Color::srgb(0.10, 0.10, 0.12);
 
-    // Shadow (does not rotate — child of root). Wider to account for the pack.
+    // Soft, gradient contact shadow (does not rotate — child of root).
     let shadow = commands
         .spawn((
             Sprite {
                 image: art.soft.clone(),
-                color: Color::srgba(0.0, 0.0, 0.0, 0.40),
-                custom_size: Some(Vec2::new(34.0, 22.0)),
+                color: Color::srgba(0.0, 0.0, 0.0, 0.34),
+                custom_size: Some(Vec2::new(40.0, 26.0)),
                 ..default()
             },
-            Transform::from_xyz(0.0, -4.0, -0.5),
+            Transform::from_xyz(1.0, -5.0, -0.5),
         ))
         .id();
 
@@ -219,18 +252,20 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let leg_l = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
     let leg_r = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
 
-    // ---- Torso built from blocky squares/rectangles (no ellipses) ----
+    // ---- Torso built from blocky squares/rectangles (t-shirt) ----
     // The main body block is `torso` (recoloured on hit); the rest are detail.
-    let torso = commands.spawn(rect(jacket, 20.0, 18.0, 0.0)).id();
-    let back_block = commands.spawn(rect(jacket_dark, 8.0, 18.0, -0.01)).id();
+    let torso = commands.spawn(rect(shirt, 20.0, 18.0, 0.0)).id();
+    let back_block = commands.spawn(rect(shirt_dark, 8.0, 18.0, -0.01)).id();
     commands.entity(back_block).insert(Transform::from_xyz(-7.0, 0.0, -0.01));
-    let chest = commands.spawn(rect(jacket_hi, 11.0, 12.0, 0.02)).id();
+    let chest = commands.spawn(rect(shirt_hi, 11.0, 12.0, 0.02)).id();
     commands.entity(chest).insert(Transform::from_xyz(3.0, 0.0, 0.02));
-    let shoulder_l = commands.spawn(rect(jacket_dark, 7.0, 7.0, 0.03)).id();
-    commands.entity(shoulder_l).insert(Transform::from_xyz(1.0, 8.0, 0.03));
-    let shoulder_r = commands.spawn(rect(jacket_dark, 7.0, 7.0, 0.03)).id();
-    commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -8.0, 0.03));
-    let collar = commands.spawn(rect(jacket_dark, 5.0, 10.0, 0.04)).id();
+    // Short t-shirt sleeve caps at the shoulders.
+    let shoulder_l = commands.spawn(rect(shirt, 6.0, 7.0, 0.03)).id();
+    commands.entity(shoulder_l).insert(Transform::from_xyz(2.0, 8.5, 0.03));
+    let shoulder_r = commands.spawn(rect(shirt, 6.0, 7.0, 0.03)).id();
+    commands.entity(shoulder_r).insert(Transform::from_xyz(2.0, -8.5, 0.03));
+    // Crew-neck collar.
+    let collar = commands.spawn(rect(skin, 5.0, 9.0, 0.04)).id();
     commands.entity(collar).insert(Transform::from_xyz(8.0, 0.0, 0.04));
 
     // Body-armour plate carrier (toggled on when equipped).
@@ -254,43 +289,39 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         .entity(torso)
         .add_children(&[back_block, chest, shoulder_l, shoulder_r, collar, armor_root]);
 
-    // ---- Arms: two rectangle segments hinged at a circular elbow, plus a
-    // circular hand. `bend` angles the forearm inward so both hands meet the
-    // gun. The returned entity is the shoulder pivot the animation drives. ----
+    // ---- Arms: short t-shirt sleeve (upper arm) then a BARE skin forearm,
+    // two segments hinged at a circular elbow, ending in a circular hand.
+    // `bend` angles the forearm inward so both hands meet the gun. ----
     let build_arm = |commands: &mut Commands, bend: f32| -> Entity {
         let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
-        let l1 = 7.0; // upper arm
-        let l2 = 7.5; // forearm
+        let l1 = 6.0; // short sleeve (upper arm)
+        let l2 = 8.5; // bare forearm
 
-        let upper = commands.spawn(rect(jacket, l1, 5.4, 0.1)).id();
+        // Sleeve near the shoulder, then bare (skin) upper arm.
+        let sleeve = commands.spawn(rect(shirt, 4.0, 5.6, 0.1)).id();
+        commands.entity(sleeve).insert(Transform::from_xyz(2.0, 0.0, 0.11));
+        let upper = commands.spawn(rect(skin, l1, 5.2, 0.1)).id();
         commands.entity(upper).insert(Transform::from_xyz(l1 * 0.5, 0.0, 0.1));
-        // Ladder stitching on the upper arm.
-        let st1 = commands.spawn(rect(stitch, 1.1, 4.4, 0.11)).id();
-        commands.entity(st1).insert(Transform::from_xyz(l1 * 0.4, 0.0, 0.11));
-        let st2 = commands.spawn(rect(stitch, 1.1, 4.4, 0.11)).id();
-        commands.entity(st2).insert(Transform::from_xyz(l1 * 0.7, 0.0, 0.11));
         // Elbow joint — a circle.
-        let elbow = commands.spawn(ellipse(art, jacket_dark, 6.0, 6.0, 0.12)).id();
+        let elbow = commands.spawn(ellipse(art, skin_dark, 6.0, 6.0, 0.12)).id();
         commands.entity(elbow).insert(Transform::from_xyz(l1, 0.0, 0.12));
 
-        // Forearm pivots at the elbow and bends inward.
+        // Bare forearm pivots at the elbow and bends inward.
         let forearm_pivot = commands
             .spawn((
                 Transform::from_xyz(l1, 0.0, 0.0).with_rotation(Quat::from_rotation_z(bend)),
                 Visibility::default(),
             ))
             .id();
-        let forearm = commands.spawn(rect(jacket, l2, 5.0, 0.1)).id();
+        let forearm = commands.spawn(rect(skin, l2, 5.0, 0.1)).id();
         commands.entity(forearm).insert(Transform::from_xyz(l2 * 0.5, 0.0, 0.1));
-        let cuff = commands.spawn(rect(jacket_dark, 2.6, 5.4, 0.11)).id();
-        commands.entity(cuff).insert(Transform::from_xyz(l2 - 1.0, 0.0, 0.11));
-        let hand = commands.spawn(ellipse(art, skin_dark, 5.6, 5.6, 0.13)).id();
+        let hand = commands.spawn(ellipse(art, skin_dark, 5.8, 5.8, 0.13)).id();
         commands.entity(hand).insert(Transform::from_xyz(l2 + 1.0, 0.0, 0.13));
-        commands.entity(forearm_pivot).add_children(&[forearm, cuff, hand]);
+        commands.entity(forearm_pivot).add_children(&[forearm, hand]);
 
         commands
             .entity(pivot)
-            .add_children(&[upper, st1, st2, elbow, forearm_pivot]);
+            .add_children(&[sleeve, upper, elbow, forearm_pivot]);
         pivot
     };
     // Right/gun arm bends up toward centre; left arm bends down toward centre.
@@ -411,11 +442,11 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         .spawn((
             Sprite {
                 image: art.soft.clone(),
-                color: Color::srgba(0.0, 0.0, 0.0, 0.36),
-                custom_size: Some(Vec2::new(30.0 * scale, 20.0 * scale)),
+                color: Color::srgba(0.0, 0.0, 0.0, 0.32),
+                custom_size: Some(Vec2::new(36.0 * scale, 24.0 * scale)),
                 ..default()
             },
-            Transform::from_xyz(0.0, -4.0 * scale, -0.5),
+            Transform::from_xyz(1.0 * scale, -5.0 * scale, -0.5),
         ))
         .id();
 
@@ -579,10 +610,10 @@ pub fn animate_player(
 
     // Hurt flash tint.
     let flash = (p.hurt_flash * 5.0).clamp(0.0, 1.0);
-    let jacket = PLAYER_JACKET;
+    let shirt = PLAYER_SHIRT;
     let skin = PLAYER_SKIN;
     if let Ok(mut s) = sprite_q.get_mut(rig.torso) {
-        s.color = mix(jacket, Color::WHITE, flash * 0.7);
+        s.color = mix(shirt, Color::WHITE, flash * 0.7);
     }
     if let Ok(mut s) = sprite_q.get_mut(rig.head) {
         s.color = mix(skin, Color::WHITE, flash * 0.7);
