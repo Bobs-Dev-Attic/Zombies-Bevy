@@ -3,6 +3,7 @@ mod camera;
 mod combat;
 mod common;
 mod enemy;
+mod gear;
 mod hud;
 mod input;
 mod player;
@@ -39,6 +40,7 @@ fn main() {
         .init_resource::<Shake>()
         .init_resource::<enemy::WaveState>()
         .init_resource::<combat::FireLatch>()
+        .init_resource::<gear::PickupSpawner>()
         .add_event::<enemy::SpitEvent>()
         .add_event::<combat::Explosion>()
         .add_systems(Startup, (camera::setup_camera, art::setup_art))
@@ -75,6 +77,9 @@ fn main() {
                 combat::particle_system,
                 combat::decal_system,
                 combat::zombie_death_system,
+                gear::pickup_collect,
+                gear::pickup_spawn_over_time,
+                gear::pickup_icon_bob,
                 camera::camera_follow,
                 hud::update_hud,
                 hud::check_death,
@@ -85,7 +90,12 @@ fn main() {
         // animation runs after movement/AI so parts track the latest state
         .add_systems(
             Update,
-            (art::animate_player, art::animate_reload_ring, art::animate_zombies)
+            (
+                art::animate_player,
+                art::animate_reload_ring,
+                art::animate_zombies,
+                art::update_gear_visuals,
+            )
                 .after(player::player_update)
                 .run_if(in_state(GameState::Playing)),
         )
