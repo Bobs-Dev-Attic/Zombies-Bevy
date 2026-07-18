@@ -246,10 +246,13 @@ pub fn firing_system(
     shake.add(if w.explosive > 0.0 { 0.5 } else { 0.12 + w.knockback * 0.0006 });
 
     let mut rng = rand::thread_rng();
-    // Eject a casing to the side — flung a good distance with a little tumble.
+    // Eject a casing from the gun's breech (out to the right side of the slide),
+    // flung a good distance with a little tumble.
     {
         let ca = angle + std::f32::consts::FRAC_PI_2 + rng.gen_range(-0.3..0.3);
-        let eject = pos + Vec2::new(angle.cos(), angle.sin()) * 12.0;
+        let fwd = Vec2::new(angle.cos(), angle.sin());
+        let side = Vec2::new((angle + std::f32::consts::FRAC_PI_2).cos(), (angle + std::f32::consts::FRAC_PI_2).sin());
+        let eject = pos + fwd * 26.0 + side * 4.0;
         commands.spawn((
             Sprite::from_color(Color::srgb(0.78, 0.62, 0.22), Vec2::new(3.0, 1.6)),
             Transform {
@@ -301,6 +304,51 @@ pub fn firing_system(
             },
         ));
     }
+}
+
+/// On the frame a magazine-fed reload begins, fling the spent magazine out of
+/// the mag well so it drops away to the side and fades.
+pub fn reload_fx(
+    mut commands: Commands,
+    q: Query<(&Player, &Transform)>,
+    mut prev: Local<f32>,
+) {
+    let Ok((p, tf)) = q.single() else {
+        *prev = 0.0;
+        return;
+    };
+    let now = p.reloading;
+    let kind = p.weapon().kind;
+    let mag_fed = matches!(kind, WeaponKind::Pistol | WeaponKind::Smg | WeaponKind::Rifle);
+    // Rising edge: a reload just started.
+    if now > 0.0 && *prev <= 0.0 && mag_fed {
+        let angle = p.angle;
+        let pos = tf.translation.truncate();
+        let fwd = Vec2::new(angle.cos(), angle.sin());
+        // The mag well sits under the grip, a little in front of the body.
+        let at = pos + fwd * 20.0;
+        // Drop toward the near/lower side and slightly back.
+        let mut rng = rand::thread_rng();
+        let drop = angle - std::f32::consts::FRAC_PI_2 + rng.gen_range(-0.25..0.25);
+        let mag = Color::srgb(0.05, 0.05, 0.06);
+        commands.spawn((
+            Sprite::from_color(mag, Vec2::new(4.0, 6.0)),
+            Transform {
+                translation: Vec3::new(at.x, at.y, Z_PARTICLE),
+                rotation: Quat::from_rotation_z(angle),
+                ..default()
+            },
+            Particle {
+                vel: Vec2::new(drop.cos(), drop.sin()) * rng.gen_range(45.0..80.0),
+                life: 0.8,
+                max_life: 0.8,
+                drag: 0.9,
+                gravity: 0.0,
+                base: mag,
+            },
+        ));
+    }
+    *prev = now;
 }
 
 pub fn spit_system(mut ev: EventReader<SpitEvent>, mut commands: Commands) {

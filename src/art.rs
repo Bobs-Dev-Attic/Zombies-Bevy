@@ -43,6 +43,16 @@ pub struct GearVisuals {
     pub hair: Entity,
 }
 
+/// A distinct held model per weapon kind (indexed by `WeaponKind::index`), all
+/// children of `Rig::weapon`; only the equipped one is shown. `pistol_slide` and
+/// `pistol_mag` are driven during a reload (slide racks, magazine drops).
+#[derive(Component)]
+pub struct WeaponVisuals {
+    pub roots: [Entity; crate::weapons::WEAPON_KINDS],
+    pub pistol_slide: Entity,
+    pub pistol_mag: Entity,
+}
+
 const RELOAD_TICKS: usize = 14;
 
 /// Entity handles to a character's body parts.
@@ -434,11 +444,90 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         .entity(head)
         .add_children(&[hair, brow, cap_root, helmet_root]);
 
-    // ---- Gunmetal 9mm: slide + grip ----
-    let weapon = commands.spawn(rect(gun, 18.0, 4.5, 0.15)).id();
-    let grip = commands.spawn(rect(Color::srgb(0.06, 0.06, 0.07), 5.0, 6.0, 0.14)).id();
-    commands.entity(grip).insert(Transform::from_xyz(-4.0, 3.0, 0.14));
-    commands.entity(weapon).add_child(grip);
+    // ---- Weapons: a distinct top-down model per kind, all hung off one weapon
+    // pivot. Every gun is drawn barrel-forward (+X) with the grip at the origin
+    // (where the hands hold it), so it never reads as a sideways bar. Only the
+    // equipped kind is shown (see `animate_player`). ----
+    let gun_dark = Color::srgb(0.05, 0.05, 0.06);
+    let steel = Color::srgb(0.55, 0.57, 0.62);
+    let wood = Color::srgb(0.32, 0.20, 0.11);
+    let weapon = commands.spawn((Transform::default(), Visibility::default())).id();
+
+    // Helper: spawn a rect part at (x,y) as a child of a weapon group.
+    let part = |commands: &mut Commands, c: Color, w: f32, h: f32, x: f32, y: f32| -> Entity {
+        commands
+            .spawn((
+                Sprite::from_color(c, Vec2::new(w, h)),
+                Transform::from_xyz(x, y, 0.15),
+            ))
+            .id()
+    };
+    let group = |commands: &mut Commands, parts: Vec<Entity>| -> Entity {
+        let g = commands.spawn((Transform::default(), Visibility::Hidden)).id();
+        commands.entity(g).add_children(&parts);
+        g
+    };
+
+    // Melee (knife/bat): a short blade forward of a dark handle.
+    let melee_g = {
+        let blade = part(commands, steel, 16.0, 3.0, 9.0, 0.0);
+        let tip = part(commands, steel, 3.0, 5.0, 17.0, 0.0);
+        let guard = part(commands, gun_dark, 2.5, 6.0, 1.0, 0.0);
+        let handle = part(commands, wood, 5.0, 3.0, -2.0, 0.0);
+        group(commands, vec![blade, tip, guard, handle])
+    };
+
+    // Pistol: compact slide + grip + magazine. The slide and magazine are
+    // animated during a reload.
+    let pistol_slide = part(commands, gun, 13.0, 5.0, 7.0, 0.0);
+    let pistol_mag = part(commands, gun_dark, 4.0, 5.0, 0.0, -4.5);
+    let pistol_g = {
+        let frame = part(commands, gun_dark, 7.0, 6.5, 0.5, -0.5);
+        let barrel = part(commands, gun_dark, 3.0, 3.0, 13.0, 0.0);
+        group(commands, vec![frame, pistol_mag, pistol_slide, barrel])
+    };
+
+    // SMG (machine gun): body, foregrip mag, short barrel, stubby stock.
+    let smg_g = {
+        let body = part(commands, gun, 14.0, 5.0, 6.0, 0.0);
+        let grip = part(commands, gun_dark, 5.0, 6.0, 0.5, -3.5);
+        let mag = part(commands, gun_dark, 4.0, 7.0, 5.0, -5.5);
+        let barrel = part(commands, gun_dark, 7.0, 2.6, 15.0, 0.0);
+        let stock = part(commands, gun_dark, 5.0, 4.0, -3.0, 0.0);
+        group(commands, vec![stock, body, grip, mag, barrel])
+    };
+
+    // Shotgun: long barrel, pump, wood stock.
+    let shotgun_g = {
+        let barrel = part(commands, gun, 22.0, 4.0, 12.0, 0.0);
+        let pump = part(commands, gun_dark, 6.0, 5.5, 10.0, -1.0);
+        let stock = part(commands, wood, 9.0, 5.0, -3.5, 0.0);
+        let grip = part(commands, gun_dark, 4.0, 5.0, 1.0, -3.5);
+        group(commands, vec![stock, grip, barrel, pump])
+    };
+
+    // Assault rifle: long body, curved mag, thin barrel, stock, pistol grip.
+    let rifle_g = {
+        let stock = part(commands, gun_dark, 7.0, 5.0, -4.0, 0.0);
+        let body = part(commands, gun, 20.0, 4.5, 9.0, 0.0);
+        let mag = part(commands, gun_dark, 4.5, 8.0, 6.0, -5.5);
+        let barrel = part(commands, gun_dark, 9.0, 2.4, 21.0, 0.0);
+        let grip = part(commands, gun_dark, 4.0, 5.0, 2.5, -4.0);
+        group(commands, vec![stock, body, grip, mag, barrel])
+    };
+
+    // Bazooka: fat tube with a rear vent, top sight and a pistol grip.
+    let launcher_g = {
+        let tube = part(commands, gun, 30.0, 7.5, 13.0, 0.0);
+        let rear = part(commands, gun_dark, 5.0, 9.5, -3.5, 0.0);
+        let sight = part(commands, gun_dark, 3.0, 4.0, 7.0, 4.5);
+        let grip = part(commands, gun_dark, 4.0, 5.5, 3.0, -5.5);
+        group(commands, vec![rear, tube, sight, grip])
+    };
+
+    let weapon_roots = [melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g];
+    commands.entity(weapon).add_children(&weapon_roots);
+
     // Small square flash at the barrel tip (pixelated, not a soft glow).
     let flash = commands
         .spawn((
@@ -489,6 +578,11 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         armor_root,
         backpack_root,
         hair,
+    });
+    commands.entity(root).insert(WeaponVisuals {
+        roots: weapon_roots,
+        pistol_slide,
+        pistol_mag,
     });
 }
 
@@ -573,11 +667,12 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 }
 
 pub fn animate_player(
-    player_q: Query<(&Player, &Rig)>,
+    player_q: Query<(&Player, &Rig, &WeaponVisuals)>,
     mut tf_q: Query<&mut Transform>,
     mut sprite_q: Query<&mut Sprite>,
+    mut vis_q: Query<&mut Visibility>,
 ) {
-    let Ok((p, rig)) = player_q.single() else {
+    let Ok((p, rig, wv)) = player_q.single() else {
         return;
     };
     let angle = p.angle;
@@ -641,13 +736,49 @@ pub fn animate_player(
         }
     }
 
-    // Arms + weapon depend on weapon type / recoil / swing.
+    // Arms + weapon depend on weapon type / recoil / swing / reload.
     let w = p.weapon();
     let melee = w.kind == WeaponKind::Melee;
     let recoil = p.recoil;
+
+    // Show only the equipped weapon's model.
+    let cur_kind = w.kind.index();
+    for (i, &e) in wv.roots.iter().enumerate() {
+        if let Ok(mut v) = vis_q.get_mut(e) {
+            *v = if i == cur_kind {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+        }
+    }
+
+    // Reload progress (0..1) drives a per-gun reload animation whose length
+    // automatically matches each weapon's own reload cycle time.
+    let reloading = p.reloading > 0.0;
+    let rl = p.reload_progress();
+    // Support hand fetches/seats a fresh magazine: a single dip-and-return that
+    // peaks at mid-cycle.
+    let swap = if reloading {
+        (rl * std::f32::consts::PI).sin()
+    } else {
+        0.0
+    };
+    // Slide/pump racks back near the start and slams home at the very end.
+    let rack = if reloading {
+        if rl < 0.15 {
+            rl / 0.15
+        } else if rl > 0.82 {
+            ((1.0 - rl) / 0.18).clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    } else {
+        0.0
+    };
+
     // Arms are shoulder pivots at the shoulders; the forearm bend (baked in)
     // brings both hands onto the gun. We drive the shoulder position + rotation.
-    // Shoulders sit just behind centre; the long arms reach forward to the gun.
     if melee {
         // swing arc
         let sw = if p.swing_dur > 0.0 { p.swing_t / p.swing_dur } else { 0.0 };
@@ -661,24 +792,52 @@ pub fn animate_player(
             a.rotation = Quat::from_rotation_z(swing * 0.6);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            wt.translation = Vec3::new(14.0, -4.0, 0.15);
+            wt.translation = Vec3::new(12.0, -3.0, 0.15);
             wt.rotation = Quat::from_rotation_z(swing);
         }
     } else {
-        // Two-handed pistol grip pushed out in front, recoiling backward on fire.
+        // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
+        // fire and dipping while reloading.
         let back = recoil * 5.0;
+        // Right/gun hand stays on the grip; left/support hand drops to the mag
+        // well and comes back up during a reload.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
             a.translation = Vec3::new(1.0 - back, -9.0, 0.1);
-            a.rotation = Quat::IDENTITY;
+            a.rotation = Quat::from_rotation_z(-0.15 * swap);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(1.0 - back, 9.0, 0.1);
-            a.rotation = Quat::IDENTITY;
+            a.translation = Vec3::new(1.0 - back - 5.0 * swap, 9.0 - 11.0 * swap, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.6 * swap);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            wt.translation = Vec3::new(30.0 - back, 0.0, 0.15);
-            wt.rotation = Quat::IDENTITY;
+            // Barrel dips a little while reloading.
+            wt.translation = Vec3::new(24.0 - back, -2.0 * swap, 0.15);
+            wt.rotation = Quat::from_rotation_z(-0.28 * swap);
         }
+    }
+
+    // Pistol slide racks back and the magazine drops out / re-seats on reload.
+    if let Ok(mut st) = tf_q.get_mut(wv.pistol_slide) {
+        st.translation.x = 7.0 - 4.5 * rack;
+    }
+    if let Ok(mut mv) = vis_q.get_mut(wv.pistol_mag) {
+        // Mag is out for the first ~55% of the cycle (dropped), then a fresh one
+        // is seated for the remainder.
+        let mag_out = reloading && rl < 0.55;
+        *mv = if w.kind == WeaponKind::Pistol && !mag_out {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if let Ok(mut mt) = tf_q.get_mut(wv.pistol_mag) {
+        // The seated mag slides up into the well as it re-enters.
+        let seat = if reloading && rl >= 0.55 {
+            ((rl - 0.55) / 0.2).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        mt.translation.y = -4.5 - (1.0 - seat) * 5.0;
     }
 
     // Muzzle flash.

@@ -4,6 +4,23 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.9.0]
+
+### Added
+- **Distinct weapon models** — each weapon kind now has its own top-down model
+  (pistol, SMG, shotgun, assault rifle, bazooka, melee blade) instead of one
+  shared bar, all drawn barrel-forward with the grip in the hands so nothing
+  reads as being held sideways.
+- **Per-gun reload animation** — reloading now plays out visibly and its length
+  matches each weapon's own reload cycle time: the support hand dips to the mag
+  well and back, the barrel dips, and the spent magazine is flung out and drops
+  away. For the pistol the **slide racks back, the clip falls out, and the arm
+  seats a fresh magazine** before the slide slams home.
+
+### Changed
+- **Shell casings eject from the breech** — spent casings now fly out of the
+  side of the gun's slide instead of from near the body.
+
 ## [0.8.3]
 
 ### Changed

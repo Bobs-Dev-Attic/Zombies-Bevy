@@ -87,6 +87,7 @@ fn main() {
                 combat::decal_system,
                 combat::zombie_death_system,
                 combat::muzzle_flash_system,
+                combat::reload_fx,
                 gear::pickup_collect,
                 gear::pickup_spawn_over_time,
                 gear::pickup_icon_bob,
