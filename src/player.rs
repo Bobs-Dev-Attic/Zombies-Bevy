@@ -189,16 +189,19 @@ impl Player {
         self.invuln = 0.3;
     }
 
-    pub fn equip_helmet(&mut self, dura: f32) {
+    /// Equip a helmet with `dura` remaining out of `max` full durability (a
+    /// freshly-picked helmet passes dura == max; a damaged, re-worn one passes
+    /// its remaining dura with the full max so the wear bar reads partial).
+    pub fn equip_helmet(&mut self, dura: f32, max: f32) {
         self.head_gear = HeadGear::Helmet;
         self.helmet_dura = dura;
-        self.helmet_max = dura;
+        self.helmet_max = max;
         self.armor_flash = 0.2;
     }
-    pub fn equip_armor(&mut self, dura: f32) {
+    pub fn equip_armor(&mut self, dura: f32, max: f32) {
         self.body_gear = BodyGear::Armor;
         self.armor_dura = dura;
-        self.armor_max = dura;
+        self.armor_max = max;
         self.armor_flash = 0.2;
     }
     pub fn equip_cap(&mut self) {

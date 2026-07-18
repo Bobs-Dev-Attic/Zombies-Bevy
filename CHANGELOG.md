@@ -4,6 +4,28 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.10.4]
+
+### Fixed
+- **Body no longer drifts off after firing** — the recoil kick used an
+  accumulating offset on the torso (which was never reset), so the shirt slid
+  away from the head/arms with every shot. It now resets each frame.
+
+### Changed
+- **Shotgun hold** — the butt tucks back into the right armpit again (angled
+  stock) with the barrel still level so it fires straight; the left hand sits on
+  the pump and the right on the trigger.
+- **Zombies don't enter the player's space** — they're held at the edge of the
+  player's body instead of overlapping it.
+- **More player-like zombies** — thinner torsos, **feet** on the legs, and their
+  **arms vary**: some shamble with swinging arms, others hold their arms out
+  and grasp toward the player.
+
+### Added
+- **Gear swapping** — walking over a new helmet while already wearing one now
+  **drops the worn helmet (keeping its damage) and equips the new one**; same for
+  body armour. Re-picking a dropped piece restores its remaining durability.
+
 ## [0.10.3]
 
 ### Changed

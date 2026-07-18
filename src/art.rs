@@ -508,14 +508,20 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     };
 
     // Shotgun: barrel runs along the centreline (so it fires straight down the
-    // sights) with a dropped stock + grip tucked below toward the shoulder. The
-    // pump slides along the barrel.
+    // sights); the stock angles back and down from the receiver to the butt so
+    // the butt can tuck into the shoulder/armpit. The pump slides on the barrel.
     let shotgun_pump = part(commands, gun_dark, 6.0, 5.0, 9.0, 0.0);
     let shotgun_g = {
         let barrel = part(commands, gun, 24.0, 4.0, 13.0, 0.0);
         let receiver = part(commands, gun_dark, 6.0, 5.0, 2.0, -0.5);
-        let stock = part(commands, wood, 9.0, 4.5, -3.5, -3.0);
-        let grip = part(commands, gun_dark, 4.0, 5.5, 0.5, -4.5);
+        // Angled stock: long axis runs from the receiver down-back to the butt.
+        let stock = commands
+            .spawn((
+                Sprite::from_color(wood, Vec2::new(11.0, 4.5)),
+                Transform::from_xyz(-3.0, -4.0, 0.15).with_rotation(Quat::from_rotation_z(0.6)),
+            ))
+            .id();
+        let grip = part(commands, gun_dark, 4.0, 5.5, -1.0, -5.5);
         group(commands, vec![stock, grip, receiver, barrel, shotgun_pump])
     };
 
@@ -629,10 +635,18 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
     let body = commands.spawn((Transform::default(), Visibility::default())).id();
     let mut extras: Vec<Entity> = Vec::new();
 
-    // ---- Legs (player-like proportions). A missing leg is hidden and replaced
-    // by a short bloody stump with a nub of bone. ----
+    // ---- Legs (player-like proportions) ending in a foot; a missing leg is
+    // hidden and replaced by a short bloody stump with a nub of bone. ----
+    let shoe = darker(look.pants, 0.55);
     let leg_l = commands.spawn(rect(look.pants, 8.0 * s, 5.5 * s, -0.2)).id();
     let leg_r = commands.spawn(rect(look.pants, 8.0 * s, 5.5 * s, -0.2)).id();
+    // Feet at the toe of each leg (move with the leg as it strides).
+    let foot_l = commands.spawn(rect(shoe, 4.0 * s, 5.0 * s, -0.19)).id();
+    commands.entity(foot_l).insert(Transform::from_xyz(5.0 * s, 0.0, -0.19));
+    commands.entity(leg_l).add_child(foot_l);
+    let foot_r = commands.spawn(rect(shoe, 4.0 * s, 5.0 * s, -0.19)).id();
+    commands.entity(foot_r).insert(Transform::from_xyz(5.0 * s, 0.0, -0.19));
+    commands.entity(leg_r).add_child(foot_r);
     let mut stump = |commands: &mut Commands, x: f32, y: f32| {
         let st = commands.spawn(rect(look.skin, 4.0 * s, 5.0 * s, -0.19)).id();
         commands.entity(st).insert(Transform::from_xyz(x, y, -0.19));
@@ -652,10 +666,11 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         stump(commands, -2.0 * s, -5.0 * s);
     }
 
-    // ---- Torso (rounded, like the player) with an optional bloody gash/ribs. ----
-    let torso = commands.spawn(rrect(art, look.shirt, 20.0 * s, 16.0 * s, 0.0)).id();
-    let back = commands.spawn(rrect(art, darker(look.shirt, 0.7), 10.0 * s, 15.0 * s, -0.01)).id();
-    commands.entity(back).insert(Transform::from_xyz(-5.0 * s, 0.0, -0.01));
+    // ---- Torso (rounded, thinner front-to-back like the player) with an
+    // optional bloody gash/ribs. ----
+    let torso = commands.spawn(rrect(art, look.shirt, 16.0 * s, 16.0 * s, 0.0)).id();
+    let back = commands.spawn(rrect(art, darker(look.shirt, 0.7), 8.0 * s, 15.0 * s, -0.01)).id();
+    commands.entity(back).insert(Transform::from_xyz(-4.0 * s, 0.0, -0.01));
     commands.entity(torso).add_child(back);
     if look.gash {
         let wound = commands.spawn(rect(blood, 6.0 * s, 7.0 * s, 0.03)).id();
@@ -887,16 +902,16 @@ pub fn animate_player(
         // Left/support hand on the pump — pulls back as it's racked.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
             a.translation = Vec3::new(1.0 - pump * 6.0, 7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.15);
+            a.rotation = Quat::from_rotation_z(0.31);
         }
         // Right/trigger hand, cocked back to the grip.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
             a.translation = Vec3::new(1.0 - back, -7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.6);
+            a.rotation = Quat::from_rotation_z(-1.12);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
             // Barrel level and centred; recoils straight back on fire.
-            wt.translation = Vec3::new(14.0 - back, 0.0, 0.15);
+            wt.translation = Vec3::new(12.0 - back, 0.0, 0.15);
             wt.rotation = Quat::IDENTITY;
         }
     } else {
@@ -924,7 +939,7 @@ pub fn animate_player(
     // hands on a normal gun; the shotgun folds the elbows harder so the hands
     // land on its pump and trigger.
     let (fore_bend_l, fore_bend_r) = if w.kind == WeaponKind::Shotgun {
-        (-0.9, 1.9)
+        (-1.26, 2.36)
     } else {
         (-0.42, 0.42)
     };
@@ -942,13 +957,13 @@ pub fn animate_player(
     }
 
     // Recoil kick: the head and upper body rock back a touch when firing.
-    if recoil > 0.001 {
-        if let Ok(mut h) = tf_q.get_mut(rig.head) {
-            h.translation.x -= recoil * 2.2;
-        }
-        if let Ok(mut t) = tf_q.get_mut(rig.torso) {
-            t.translation.x -= recoil * 1.3;
-        }
+    // Absolute assignment (torso.x is otherwise never reset, so `-=` would drift).
+    if let Ok(mut h) = tf_q.get_mut(rig.head) {
+        // The head's x was reset to 0 above this frame, so offset from there.
+        h.translation.x -= recoil * 2.2;
+    }
+    if let Ok(mut t) = tf_q.get_mut(rig.torso) {
+        t.translation.x = -recoil * 1.3;
     }
 
     // Pistol slide racks back and the magazine drops out / re-seats on reload.
@@ -1105,15 +1120,24 @@ pub fn animate_zombies(
                 r.translation.y = -5.0 * s;
                 r.rotation = Quat::IDENTITY;
             }
-            // Reaching arms swing fore/aft with a per-zombie amplitude.
-            let reach = (z.frame * 1.3).sin() * 3.0 * z.arm_amp;
+            // Arms either swing fore/aft or reach out toward the player, varied
+            // per zombie (reach_style 0 = swing, ~1 = outstretched grasping).
+            let rs = z.reach_style;
+            let lerp = |a: f32, b: f32| a + (b - a) * rs;
+            let swing = (z.frame * 1.3).sin() * 3.0 * z.arm_amp;
+            let grasp = (z.frame * 2.2).sin() * 1.6; // twitchy grasp when reaching
+            // Left arm: swing pose vs reach-forward pose.
             if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-                a.translation = Vec3::new(9.0 * s + reach, 4.0 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(0.2);
+                let x = lerp(9.0 * s + swing, 14.0 * s + grasp);
+                let y = lerp(4.0 * s, 2.5 * s);
+                a.translation = Vec3::new(x, y, 0.1);
+                a.rotation = Quat::from_rotation_z(lerp(0.2, -0.35));
             }
             if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-                a.translation = Vec3::new(9.0 * s - reach, -4.0 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(-0.2);
+                let x = lerp(9.0 * s - swing, 14.0 * s - grasp);
+                let y = lerp(-4.0 * s, -2.5 * s);
+                a.translation = Vec3::new(x, y, 0.1);
+                a.rotation = Quat::from_rotation_z(lerp(-0.2, 0.35));
             }
             if let Ok(mut h) = tf_q.get_mut(rig.head) {
                 h.translation.x = 4.0 * s;
