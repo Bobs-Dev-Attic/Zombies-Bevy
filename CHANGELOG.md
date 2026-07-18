@@ -4,6 +4,14 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.10.2]
+
+### Changed
+- **Shotgun grip refined** — the gun sits a little further forward with the butt
+  just in front of the right armpit; the player's elbows now actually **fold** so
+  the **left hand rests on the pump** and the **right hand is cocked back on the
+  trigger** (the forearm joints are now posable, not fixed).
+
 ## [0.10.1]
 
 ### Fixed
