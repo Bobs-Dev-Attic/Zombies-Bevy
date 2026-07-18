@@ -312,17 +312,17 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
 
     // ---- Torso: rectangular body with softly rounded back & shoulders ----
     // The main body block is `torso` (recoloured on hit); the rest are detail.
-    let torso = commands.spawn(rrect(art, shirt, 21.0, 19.0, 0.0)).id();
-    // Rounded back/upper-back hump.
-    let back_block = commands.spawn(rrect(art, shirt_dark, 12.0, 19.0, -0.01)).id();
-    commands.entity(back_block).insert(Transform::from_xyz(-6.0, 0.0, -0.01));
-    let chest = commands.spawn(rrect(art, shirt_hi, 11.0, 12.0, 0.02)).id();
+    let torso = commands.spawn(rrect(art, shirt, 20.0, 16.0, 0.0)).id();
+    // Rounded back/upper-back hump (thinner).
+    let back_block = commands.spawn(rrect(art, shirt_dark, 11.0, 16.0, -0.01)).id();
+    commands.entity(back_block).insert(Transform::from_xyz(-5.5, 0.0, -0.01));
+    let chest = commands.spawn(rrect(art, shirt_hi, 10.0, 10.0, 0.02)).id();
     commands.entity(chest).insert(Transform::from_xyz(3.0, 0.0, 0.02));
-    // Rounded shoulders.
-    let shoulder_l = commands.spawn(rrect(art, shirt, 8.0, 9.0, 0.03)).id();
-    commands.entity(shoulder_l).insert(Transform::from_xyz(1.0, 9.0, 0.03));
-    let shoulder_r = commands.spawn(rrect(art, shirt, 8.0, 9.0, 0.03)).id();
-    commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -9.0, 0.03));
+    // Rounded shoulders (set a little narrower).
+    let shoulder_l = commands.spawn(rrect(art, shirt, 7.0, 8.0, 0.03)).id();
+    commands.entity(shoulder_l).insert(Transform::from_xyz(1.0, 7.5, 0.03));
+    let shoulder_r = commands.spawn(rrect(art, shirt, 7.0, 8.0, 0.03)).id();
+    commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -7.5, 0.03));
     // Body-armour plate carrier (toggled on when equipped).
     let armor_root = commands.spawn((Transform::default(), Visibility::Hidden)).id();
     let vest = commands.spawn(rect(Color::srgb(0.15, 0.16, 0.14), 19.0, 17.0, 0.05)).id();
@@ -784,11 +784,11 @@ pub fn animate_player(
         let sw = if p.swing_dur > 0.0 { p.swing_t / p.swing_dur } else { 0.0 };
         let swing = (1.0 - sw) * 1.4 - 0.7; // sweeps across
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(1.0, -9.0, 0.1);
+            a.translation = Vec3::new(1.0, -7.5, 0.1);
             a.rotation = Quat::from_rotation_z(swing);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(1.0, 9.0, 0.1);
+            a.translation = Vec3::new(1.0, 7.5, 0.1);
             a.rotation = Quat::from_rotation_z(swing * 0.6);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
@@ -799,15 +799,15 @@ pub fn animate_player(
         // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
         // fire and dipping while reloading.
         let back = recoil * 5.0;
-        // Right/gun hand stays on the grip; left/support hand drops to the mag
-        // well and comes back up during a reload.
-        if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(1.0 - back, -9.0, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.15 * swap);
-        }
+        // Left/support hand keeps the gun steady; the right hand drops to the
+        // mag well and comes back up during a reload (a small, contained move).
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(1.0 - back - 5.0 * swap, 9.0 - 11.0 * swap, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.6 * swap);
+            a.translation = Vec3::new(1.0 - back, 7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(0.10 * swap);
+        }
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+            a.translation = Vec3::new(1.0 - back - 3.0 * swap, -7.5 + 6.5 * swap, 0.1);
+            a.rotation = Quat::from_rotation_z(0.32 * swap);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
             // Barrel dips a little while reloading.
@@ -820,24 +820,25 @@ pub fn animate_player(
     if let Ok(mut st) = tf_q.get_mut(wv.pistol_slide) {
         st.translation.x = 7.0 - 4.5 * rack;
     }
+    // The magazine is normally tucked inside the grip (not drawn). It only
+    // appears during the second half of a pistol reload, sliding up into the
+    // well as the fresh mag is seated.
+    let seating = w.kind == WeaponKind::Pistol && reloading && rl >= 0.5;
     if let Ok(mut mv) = vis_q.get_mut(wv.pistol_mag) {
-        // Mag is out for the first ~55% of the cycle (dropped), then a fresh one
-        // is seated for the remainder.
-        let mag_out = reloading && rl < 0.55;
-        *mv = if w.kind == WeaponKind::Pistol && !mag_out {
+        *mv = if seating {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         };
     }
     if let Ok(mut mt) = tf_q.get_mut(wv.pistol_mag) {
-        // The seated mag slides up into the well as it re-enters.
-        let seat = if reloading && rl >= 0.55 {
-            ((rl - 0.55) / 0.2).clamp(0.0, 1.0)
+        let seat = if seating {
+            ((rl - 0.5) / 0.22).clamp(0.0, 1.0)
         } else {
-            1.0
+            0.0
         };
-        mt.translation.y = -4.5 - (1.0 - seat) * 5.0;
+        // Rises from below the grip up into the well.
+        mt.translation.y = -9.0 + seat * 5.0;
     }
 
     // Muzzle flash.

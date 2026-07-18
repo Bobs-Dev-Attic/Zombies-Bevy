@@ -22,12 +22,15 @@ pub struct InputState {
     pub knob: Vec2,           // screen-space position of the stick knob
     pub attack_center: Vec2,  // screen-space centre of the attack button
     pub attack_down: bool,    // attack button held (for the pressed look)
+    pub swap_center: Vec2,    // screen-space centre of the weapon-swap button
+    pub swap_down: bool,      // swap button touched this frame (pressed look)
 }
 
 /// Layout constants for the on-screen controls (screen pixels).
 pub const JOY_R: f32 = 70.0;
 pub const KNOB_R: f32 = 30.0;
 pub const BTN_R: f32 = 58.0;
+pub const SWAP_R: f32 = 40.0;
 
 /// Retained so the menu/game-over "press to start" can clear stale touch state.
 #[derive(Resource, Default)]
@@ -40,6 +43,7 @@ pub fn gather_input(
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut prev_touch: Local<bool>,
+    mut prev_swap: Local<bool>,
     mut input: ResMut<InputState>,
 ) {
     *input = InputState::default();
@@ -74,9 +78,12 @@ pub fn gather_input(
     let (w, h) = window.map(|win| (win.width(), win.height())).unwrap_or((1280.0, 720.0));
     let joy_base = Vec2::new(24.0 + JOY_R, h - 24.0 - JOY_R);
     let attack_center = Vec2::new(w - 28.0 - BTN_R, h - 28.0 - BTN_R);
+    // Weapon-swap button sits just above the fire button.
+    let swap_center = Vec2::new(attack_center.x, attack_center.y - BTN_R - SWAP_R - 22.0);
     input.joy_base = joy_base;
     input.knob = joy_base;
     input.attack_center = attack_center;
+    input.swap_center = swap_center;
 
     // ---- Mouse aim + fire (desktop) ----
     if let (Some(window), Some((camera, cam_tf))) = (window, cam) {
@@ -100,6 +107,9 @@ pub fn gather_input(
         if p.distance(attack_center) < BTN_R + 24.0 {
             input.fire = true;
             input.attack_down = true;
+        } else if p.distance(swap_center) < SWAP_R + 20.0 {
+            // Weapon-swap button.
+            input.swap_down = true;
         } else {
             // Movement joystick (anywhere else on screen drives it).
             let mut off = p - joy_base;
@@ -146,4 +156,11 @@ pub fn gather_input(
             input.weapon_slot = Some(i);
         }
     }
+
+    // Tapping the mobile swap button cycles to the next weapon (rising edge, so
+    // holding it doesn't spin through every gun).
+    if input.swap_down && !*prev_swap {
+        input.next_weapon = true;
+    }
+    *prev_swap = input.swap_down;
 }

@@ -46,6 +46,8 @@ pub struct JoyKnob;
 #[derive(Component)]
 pub struct AttackBtn;
 #[derive(Component)]
+pub struct SwapBtn;
+#[derive(Component)]
 pub struct AmmoText;
 #[derive(Component)]
 pub struct WaveText;
@@ -415,7 +417,7 @@ fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
     ));
 
     // ---- On-screen touch controls (hidden until touch is used) ----
-    use crate::input::{BTN_R, JOY_R, KNOB_R};
+    use crate::input::{BTN_R, JOY_R, KNOB_R, SWAP_R};
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -475,6 +477,34 @@ fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
                 Text::new("FIRE"),
                 TextFont { font_size: 18.0, ..default() },
                 TextColor(Color::srgba(1.0, 0.95, 0.9, 0.8)),
+            ));
+        });
+    // Weapon-swap button (just above FIRE).
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(SWAP_R * 2.0),
+                height: Val::Px(SWAP_R * 2.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                display: Display::None,
+                ..default()
+            },
+            ImageNode {
+                image: art.circle.clone(),
+                color: Color::srgba(0.35, 0.55, 0.85, 0.35),
+                ..default()
+            },
+            GlobalZIndex(60),
+            SwapBtn,
+            Cleanup,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new("SWAP"),
+                TextFont { font_size: 15.0, ..default() },
+                TextColor(Color::srgba(0.95, 0.97, 1.0, 0.85)),
             ));
         });
 
@@ -707,11 +737,12 @@ pub fn update_hurt_fx(
 /// Position and show/hide the on-screen touch controls.
 pub fn update_touch_controls(
     input: Res<crate::input::InputState>,
-    mut base_q: Query<&mut Node, (With<JoyBase>, Without<JoyKnob>, Without<AttackBtn>)>,
-    mut knob_q: Query<&mut Node, (With<JoyKnob>, Without<JoyBase>, Without<AttackBtn>)>,
-    mut btn_q: Query<(&mut Node, &mut ImageNode), (With<AttackBtn>, Without<JoyBase>, Without<JoyKnob>)>,
+    mut base_q: Query<&mut Node, (With<JoyBase>, Without<JoyKnob>, Without<AttackBtn>, Without<SwapBtn>)>,
+    mut knob_q: Query<&mut Node, (With<JoyKnob>, Without<JoyBase>, Without<AttackBtn>, Without<SwapBtn>)>,
+    mut btn_q: Query<(&mut Node, &mut ImageNode), (With<AttackBtn>, Without<JoyBase>, Without<JoyKnob>, Without<SwapBtn>)>,
+    mut swap_q: Query<(&mut Node, &mut ImageNode), (With<SwapBtn>, Without<JoyBase>, Without<JoyKnob>, Without<AttackBtn>)>,
 ) {
-    use crate::input::{BTN_R, JOY_R, KNOB_R};
+    use crate::input::{BTN_R, JOY_R, KNOB_R, SWAP_R};
     let show = input.touch_mode;
     let disp = if show { Display::Flex } else { Display::None };
     if let Ok(mut n) = base_q.single_mut() {
@@ -730,6 +761,13 @@ pub fn update_touch_controls(
         n.top = Val::Px(input.attack_center.y - BTN_R);
         let a = if input.attack_down { 0.6 } else { 0.32 };
         img.color = Color::srgba(0.9, 0.28, 0.22, a);
+    }
+    if let Ok((mut n, mut img)) = swap_q.single_mut() {
+        n.display = disp;
+        n.left = Val::Px(input.swap_center.x - SWAP_R);
+        n.top = Val::Px(input.swap_center.y - SWAP_R);
+        let a = if input.swap_down { 0.65 } else { 0.35 };
+        img.color = Color::srgba(0.35, 0.55, 0.85, a);
     }
 }
 
