@@ -60,11 +60,17 @@ pub fn setup_menu(mut commands: Commands) {
             ));
             p.spawn((
                 Text::new(
-                    "WASD move  •  Mouse aim  •  Click fire  •  Shift sprint\nR reload  •  1-7 or E swap weapon  •  Mobile: dual touch sticks",
+                    "WASD move  •  Mouse aim  •  Click fire  •  Shift sprint\nR reload (auto when empty)  •  1-7 or E swap weapon  •  Mobile: dual touch sticks",
                 ),
                 TextFont { font_size: 16.0, ..default() },
                 TextColor(Color::srgb(0.5, 0.55, 0.6)),
                 Node { margin: UiRect::top(Val::Px(20.0)), ..default() },
+            ));
+            p.spawn((
+                Text::new(format!("v{}", VERSION)),
+                TextFont { font_size: 15.0, ..default() },
+                TextColor(Color::srgb(0.4, 0.42, 0.48)),
+                Node { margin: UiRect::top(Val::Px(24.0)), ..default() },
             ));
         });
 }
@@ -163,6 +169,20 @@ fn spawn_hud(commands: &mut Commands) {
         TextFont { font_size: 22.0, ..default() },
         TextColor(Color::srgb(0.9, 0.9, 0.95)),
         WaveText,
+        Cleanup,
+    ));
+
+    // Version tag (bottom-right).
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(12.0),
+            bottom: Val::Px(10.0),
+            ..default()
+        },
+        Text::new(format!("v{}", VERSION)),
+        TextFont { font_size: 14.0, ..default() },
+        TextColor(Color::srgba(0.7, 0.7, 0.75, 0.6)),
         Cleanup,
     ));
 }

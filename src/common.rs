@@ -1,5 +1,8 @@
 use bevy::prelude::*;
 
+/// Game version, sourced from Cargo.toml so there's a single source of truth.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// World unit size of one tile.
 pub const TILE: f32 = 40.0;
 

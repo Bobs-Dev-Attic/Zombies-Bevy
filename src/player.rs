@@ -23,6 +23,7 @@ pub struct Player {
 
     pub cooldown: f32,
     pub reloading: f32,
+    pub reload_total: f32,
     pub exhausted: bool,
 
     // animation / feedback
@@ -61,6 +62,7 @@ impl Default for Player {
             rockets: 3,
             cooldown: 0.0,
             reloading: 0.0,
+            reload_total: 0.0,
             exhausted: false,
             walk_frame: 0.0,
             idle_t: 0.0,
@@ -138,7 +140,17 @@ impl Player {
             return false;
         }
         self.reloading = w.reload;
+        self.reload_total = w.reload;
         true
+    }
+
+    /// Fraction of the current reload completed (0..1); 0 when not reloading.
+    pub fn reload_progress(&self) -> f32 {
+        if self.reloading <= 0.0 || self.reload_total <= 0.0 {
+            0.0
+        } else {
+            (1.0 - self.reloading / self.reload_total).clamp(0.0, 1.0)
+        }
     }
 
     fn finish_reload(&mut self) {
@@ -267,5 +279,16 @@ pub fn player_update(
             p.reloading = 0.0;
             p.finish_reload();
         }
+    }
+
+    // Auto-reload: when a firearm runs dry and there's reserve ammo, start
+    // cycling a fresh mag automatically (reload time varies per weapon).
+    let w = *p.weapon();
+    if w.kind != WeaponKind::Melee
+        && p.reloading <= 0.0
+        && p.clip[p.current] <= 0
+        && p.ammo_for(w.ammo) > 0
+    {
+        p.start_reload();
     }
 }

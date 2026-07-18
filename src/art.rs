@@ -6,6 +6,11 @@ use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
+/// Player body colours, shared between rig construction and the per-frame
+/// hurt-flash tint so the base always restores correctly.
+pub const PLAYER_JACKET: Color = Color::srgb(0.28, 0.33, 0.21);
+pub const PLAYER_SKIN: Color = Color::srgb(0.33, 0.23, 0.18);
+
 /// Shared generated textures for soft circular shapes.
 #[derive(Resource)]
 pub struct Art {
@@ -16,6 +21,14 @@ pub struct Art {
 /// Marker: this character needs its visual rig built.
 #[derive(Component)]
 pub struct NeedsRig;
+
+/// A ring of ticks above the player that fills as a reload cycles.
+#[derive(Component)]
+pub struct ReloadRing {
+    pub ticks: Vec<Entity>,
+}
+
+const RELOAD_TICKS: usize = 14;
 
 /// Entity handles to a character's body parts.
 #[derive(Component)]
@@ -136,11 +149,14 @@ pub fn build_rigs(
 }
 
 fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
-    let jacket = Color::srgb(0.16, 0.22, 0.30);
-    let jacket_dark = Color::srgb(0.11, 0.15, 0.22);
-    let skin = Color::srgb(0.82, 0.64, 0.50);
-    let pants = Color::srgb(0.20, 0.22, 0.26);
-    let hair = Color::srgb(0.20, 0.14, 0.10);
+    // Palette matched to the reference art: olive-drab field jacket, dark skin,
+    // a padded/segmented olive combat helmet, gunmetal pistol.
+    let jacket = PLAYER_JACKET;
+    let jacket_dark = Color::srgb(0.19, 0.23, 0.15);
+    let skin = PLAYER_SKIN;
+    let pants = Color::srgb(0.17, 0.18, 0.15);
+    let helmet = Color::srgb(0.42, 0.40, 0.25);
+    let helmet_dark = Color::srgb(0.30, 0.29, 0.17);
 
     // Shadow (does not rotate — child of root).
     let shadow = commands
@@ -160,14 +176,35 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
 
     let leg_l = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
     let leg_r = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
-    let torso = commands.spawn(ellipse(art, jacket, 22.0, 20.0, 0.0)).id();
+    let torso = commands.spawn(ellipse(art, jacket, 22.0, 21.0, 0.0)).id();
     // Shoulder yoke for a bit of depth.
     let yoke = commands.spawn(ellipse(art, jacket_dark, 20.0, 16.0, 0.02)).id();
-    let arm_l = commands.spawn(rect(jacket_dark, 12.0, 5.0, 0.1)).id();
-    let arm_r = commands.spawn(rect(jacket_dark, 12.0, 5.0, 0.1)).id();
-    let head = commands.spawn(ellipse(art, skin, 15.0, 15.0, 0.25)).id();
-    let hair_e = commands.spawn(ellipse(art, hair, 15.0, 13.0, 0.26)).id();
-    let weapon = commands.spawn(rect(Color::srgb(0.10, 0.10, 0.12), 20.0, 4.0, 0.15)).id();
+    let arm_l = commands.spawn(rect(jacket_dark, 13.0, 5.0, 0.1)).id();
+    let arm_r = commands.spawn(rect(jacket_dark, 14.0, 5.0, 0.1)).id();
+    // Dark-skinned face.
+    let head = commands.spawn(ellipse(art, skin, 14.0, 14.0, 0.25)).id();
+
+    // Padded/segmented combat helmet sitting on the crown (child of the head so
+    // it tracks the aim), rendered just behind the face so the face peeks out.
+    let helmet_base = commands.spawn(ellipse(art, helmet, 17.0, 16.0, -0.05)).id();
+    commands.entity(helmet_base).insert(Transform::from_xyz(-3.5, 0.0, -0.05));
+    // A few quilted segments for texture.
+    let seg = |dx: f32, dy: f32| -> (Sprite, Transform) {
+        (
+            Sprite::from_color(helmet_dark, Vec2::new(3.0, 5.0)),
+            Transform::from_xyz(dx, dy, -0.04),
+        )
+    };
+    let hs1 = commands.spawn(seg(-2.0, -5.0)).id();
+    let hs2 = commands.spawn(seg(-6.0, 0.0)).id();
+    let hs3 = commands.spawn(seg(-2.0, 5.0)).id();
+    commands.entity(head).add_children(&[helmet_base, hs1, hs2, hs3]);
+
+    // Gunmetal 9mm: a slide plus a short grip.
+    let weapon = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.11), 18.0, 4.5, 0.15)).id();
+    let grip = commands.spawn(rect(Color::srgb(0.06, 0.06, 0.07), 5.0, 6.0, 0.14)).id();
+    commands.entity(grip).insert(Transform::from_xyz(-4.0, 3.0, 0.14));
+    commands.entity(weapon).add_child(grip);
     let flash = commands
         .spawn((
             Sprite {
@@ -180,10 +217,29 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         ))
         .id();
 
-    commands.entity(head).add_child(hair_e);
     commands
         .entity(body)
         .add_children(&[leg_l, leg_r, torso, yoke, arm_l, arm_r, weapon, head, flash]);
+
+    // Reload cycle indicator: a ring of ticks floating above the head. Child of
+    // root (not body) so it stays screen-aligned regardless of aim.
+    let mut ticks = Vec::with_capacity(RELOAD_TICKS);
+    let radius = 12.0;
+    let cy = 26.0;
+    for i in 0..RELOAD_TICKS {
+        // Start at the top, go clockwise.
+        let a = std::f32::consts::FRAC_PI_2 - (i as f32 / RELOAD_TICKS as f32) * std::f32::consts::TAU;
+        let t = commands
+            .spawn((
+                Sprite::from_color(Color::srgba(1.0, 1.0, 1.0, 0.0), Vec2::splat(3.6)),
+                Transform::from_xyz(a.cos() * radius, cy + a.sin() * radius, 2.0),
+            ))
+            .id();
+        ticks.push(t);
+    }
+    commands.entity(root).add_children(&ticks);
+    commands.entity(root).insert(ReloadRing { ticks });
+
     commands.entity(root).add_children(&[shadow, body]);
     commands.entity(root).insert(Rig {
         body,
@@ -319,17 +375,18 @@ pub fn animate_player(
             wt.rotation = Quat::from_rotation_z(swing);
         }
     } else {
+        // Two-handed pistol grip pushed out in front, recoiling backward on fire.
         let back = recoil * 5.0;
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(9.0 - back, -3.0, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.15);
+            a.translation = Vec3::new(11.0 - back, -2.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.10);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(9.0 - back, 3.0, 0.1);
-            a.rotation = Quat::from_rotation_z(0.15);
+            a.translation = Vec3::new(10.0 - back, 2.5, 0.1);
+            a.rotation = Quat::from_rotation_z(0.10);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            wt.translation = Vec3::new(16.0 - back, 0.0, 0.15);
+            wt.translation = Vec3::new(18.0 - back, 0.0, 0.15);
             wt.rotation = Quat::IDENTITY;
         }
     }
@@ -341,13 +398,42 @@ pub fn animate_player(
 
     // Hurt flash tint.
     let flash = (p.hurt_flash * 5.0).clamp(0.0, 1.0);
-    let jacket = Color::srgb(0.16, 0.22, 0.30);
-    let skin = Color::srgb(0.82, 0.64, 0.50);
+    let jacket = PLAYER_JACKET;
+    let skin = PLAYER_SKIN;
     if let Ok(mut s) = sprite_q.get_mut(rig.torso) {
         s.color = mix(jacket, Color::WHITE, flash * 0.7);
     }
     if let Ok(mut s) = sprite_q.get_mut(rig.head) {
         s.color = mix(skin, Color::WHITE, flash * 0.7);
+    }
+}
+
+/// Light up the reload ring proportionally to the current reload's progress.
+pub fn animate_reload_ring(
+    player_q: Query<(&Player, &ReloadRing)>,
+    mut sprite_q: Query<&mut Sprite>,
+) {
+    let Ok((p, ring)) = player_q.single() else {
+        return;
+    };
+    let active = p.reloading > 0.0;
+    let progress = p.reload_progress();
+    let n = ring.ticks.len();
+    for (i, &e) in ring.ticks.iter().enumerate() {
+        if let Ok(mut s) = sprite_q.get_mut(e) {
+            if !active {
+                s.color = Color::srgba(1.0, 1.0, 1.0, 0.0);
+                continue;
+            }
+            let frac = (i as f32 + 1.0) / n as f32;
+            if frac <= progress {
+                // Filled tick — warm amber, fully lit.
+                s.color = Color::srgba(1.0, 0.82, 0.30, 0.95);
+            } else {
+                // Pending tick — dim outline so the full cycle is visible.
+                s.color = Color::srgba(0.9, 0.9, 1.0, 0.18);
+            }
+        }
     }
 }
 

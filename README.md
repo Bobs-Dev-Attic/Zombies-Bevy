@@ -35,8 +35,13 @@ cd web && python3 -m http.server 8080
 | Move          | `WASD` / arrow keys       | Left half — drag joystick       |
 | Sprint        | Hold `Shift` / full stick | Push left stick fully           |
 | Aim & fire    | Mouse + left click        | Right half — touch to aim/fire  |
-| Reload        | `R`                       | —                               |
+| Reload        | `R` (auto when empty)     | Auto when empty                 |
 | Swap weapon   | `1`–`7`, or `E`           | —                               |
+
+Firearms **auto-reload** when the magazine runs dry; a **reload cycle indicator**
+(a ring of ticks above the player) fills over the weapon's own reload time. The
+current **version** is shown on the loading screen, the menu, and in-game — see
+[`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
 
 ## What's improved over the original
 
