@@ -44,7 +44,7 @@ pub fn zdef(k: ZKind) -> ZDef {
     }
 }
 
-/// Per-zombie cosmetic variety.
+/// Per-zombie cosmetic + body-configuration variety.
 #[derive(Clone, Copy)]
 pub struct Look {
     pub skin: Color,
@@ -52,6 +52,11 @@ pub struct Look {
     pub pants: Color,
     pub hair: i8, // -1 bald, 0 short, 1 long
     pub hair_col: Color,
+    pub size: f32,        // overall build multiplier (proportions like the player)
+    pub missing_arm: i8,  // -1 none, 0 left, 1 right
+    pub missing_leg: i8,  // -1 none, 0 left, 1 right
+    pub crawler: bool,    // drags itself along the ground
+    pub gash: bool,       // a bloody wound/exposed rib on the torso
 }
 
 fn jitter(rng: &mut impl Rng, c: [f32; 3], amt: f32) -> Color {
@@ -77,15 +82,38 @@ pub fn make_look(kind: ZKind, rng: &mut impl Rng) -> Look {
     let shirt = shirts[rng.gen_range(0..shirts.len())];
     let hair_styles = [-1i8, 0, 0, 1];
     let hcol = [[0.1, 0.08, 0.06], [0.35, 0.22, 0.1], [0.6, 0.55, 0.5]];
-    let _ = kind;
     let hair = hair_styles[rng.gen_range(0..hair_styles.len())];
     let hair_pick = hcol[rng.gen_range(0..hcol.len())];
+
+    // Body configuration. Crawlers always drag; brutes are big; otherwise size
+    // and disfigurement vary per corpse.
+    let crawler = kind == ZKind::Crawler || (kind != ZKind::Brute && rng.gen_bool(0.06));
+    let size = match kind {
+        ZKind::Brute => rng.gen_range(1.0..1.15),
+        ZKind::Runner => rng.gen_range(0.82..1.0),
+        _ => rng.gen_range(0.82..1.18),
+    };
+    // Missing limbs (a crawler often has a mangled/absent leg).
+    let missing_leg = if crawler && rng.gen_bool(0.6) {
+        rng.gen_range(0..2)
+    } else if rng.gen_bool(0.08) {
+        rng.gen_range(0..2)
+    } else {
+        -1
+    };
+    let missing_arm = if rng.gen_bool(0.12) { rng.gen_range(0..2) } else { -1 };
+
     Look {
         skin: jitter(rng, skin_base, 0.05),
         shirt: jitter(rng, shirt, 0.05),
         pants: jitter(rng, [0.18, 0.18, 0.2], 0.04),
         hair,
         hair_col: jitter(rng, hair_pick, 0.03),
+        size,
+        missing_arm,
+        missing_leg,
+        crawler,
+        gash: rng.gen_bool(0.3),
     }
 }
 
@@ -123,6 +151,10 @@ pub struct Zombie {
     pub lurch_phase: f32,
     pub gait_t: f32,
     pub stride_rate: f32,
+    pub arm_amp: f32,   // per-zombie arm-swing amplitude
+    pub turn_rate: f32, // per-zombie turn responsiveness (turning radius)
+    pub trail_t: f32,   // countdown to the next blood mark
+    pub foot: i8,       // which foot leaves the next print
 
     pub look: Look,
     pub dead: bool,
@@ -131,12 +163,26 @@ pub struct Zombie {
 impl Zombie {
     pub fn new(kind: ZKind, hp_scale: f32, rng: &mut impl Rng) -> Self {
         let d = zdef(kind);
+        let look = make_look(kind, rng);
+        // Radius follows the build; movement follows the body configuration so a
+        // dragging crawler or one-legged limper moves slower than an intact one.
+        let r = d.r * look.size;
+        let mut speed = d.speed * rng.gen_range(0.9..1.12);
+        if look.crawler {
+            speed *= 0.5;
+        }
+        if look.missing_leg >= 0 {
+            speed *= 0.72;
+        }
+        if look.missing_arm >= 0 {
+            speed *= 0.95;
+        }
         Self {
             kind,
             hp: d.hp * hp_scale,
             max_hp: d.hp * hp_scale,
-            r: d.r,
-            speed: d.speed * rng.gen_range(0.9..1.12),
+            r,
+            speed,
             dmg: d.dmg,
             score: d.score,
             pattern: d.pattern,
@@ -162,7 +208,11 @@ impl Zombie {
             lurch_phase: rng.gen_range(0.0..TAU),
             gait_t: rng.gen_range(0.0..6.0),
             stride_rate: rng.gen_range(0.8..1.35),
-            look: make_look(kind, rng),
+            arm_amp: rng.gen_range(0.55..1.5),
+            turn_rate: rng.gen_range(3.0..7.5),
+            trail_t: rng.gen_range(0.0..0.5),
+            foot: 1,
+            look,
             dead: false,
         }
     }
@@ -362,7 +412,8 @@ pub fn zombie_ai(
             }
             Pattern::Ranged => {
                 let a = to.y.atan2(to.x);
-                z.angle = angle_lerp(z.angle, a, (dt * 6.0).clamp(0.0, 1.0));
+                let tr = z.turn_rate;
+                z.angle = angle_lerp(z.angle, a, (dt * tr).clamp(0.0, 1.0));
                 let ideal = 190.0;
                 if d > ideal + 40.0 {
                     tvel = heading * spd;
@@ -387,7 +438,8 @@ pub fn zombie_ai(
             let moving = tvel.length_squared() > 1.0;
             if moving {
                 let ma = tvel.y.atan2(tvel.x);
-                z.angle = angle_lerp(z.angle, ma, (dt * 6.0).clamp(0.0, 1.0));
+                let tr = z.turn_rate;
+                z.angle = angle_lerp(z.angle, ma, (dt * tr).clamp(0.0, 1.0));
             }
         }
 
@@ -421,6 +473,113 @@ pub fn zombie_ai(
                 p.hurt(player_hurt);
             }
             p.vel += player_push;
+        }
+    }
+}
+
+/// Keep zombies from stacking on the same spot: push overlapping pairs apart a
+/// little each frame, then re-resolve against the world.
+pub fn zombie_separation(
+    world: Res<World>,
+    mut q: Query<(Entity, &mut Transform, &Zombie)>,
+) {
+    // Snapshot positions/radii.
+    let items: Vec<(Entity, Vec2, f32)> = q
+        .iter()
+        .map(|(e, tf, z)| (e, tf.translation.truncate(), z.r))
+        .collect();
+    if items.len() < 2 {
+        return;
+    }
+    // Accumulate a push per zombie from every overlapping neighbour.
+    let mut pushes: Vec<(Entity, Vec2)> = Vec::with_capacity(items.len());
+    for (i, &(e, pi, ri)) in items.iter().enumerate() {
+        let mut push = Vec2::ZERO;
+        for (j, &(_, pj, rj)) in items.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let d = pi - pj;
+            let dist = d.length();
+            let min = (ri + rj) * 0.9;
+            if dist < min {
+                let n = if dist > 0.001 { d / dist } else { Vec2::new(0.3, 0.1) };
+                // Split the overlap; heavier work happens over several frames.
+                push += n * (min - dist) * 0.5;
+            }
+        }
+        pushes.push((e, push));
+    }
+    for (e, push) in pushes {
+        if push == Vec2::ZERO {
+            continue;
+        }
+        if let Ok((_, mut tf, z)) = q.get_mut(e) {
+            let cur = tf.translation.truncate();
+            let moved = world.collide(cur + push.clamp_length_max(6.0), z.r);
+            tf.translation.x = moved.x;
+            tf.translation.y = moved.y;
+            tf.translation.z = depth_z(Z_CHAR, moved.y);
+        }
+    }
+}
+
+/// Bleeding zombies leave marks on the ground: crawlers smear a continuous
+/// trail, walkers stamp the occasional bloody footprint (alternating feet).
+pub fn zombie_gore_trail(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(&mut Zombie, &Transform)>,
+) {
+    let dt = time.delta_secs();
+    let mut rng = rand::thread_rng();
+    for (mut z, tf) in q.iter_mut() {
+        let moving = z.vel.length_squared() > 25.0;
+        z.trail_t -= dt;
+        if !moving || z.trail_t > 0.0 {
+            continue;
+        }
+        let pos = tf.translation.truncate();
+        let angle = z.angle;
+        let wounded = z.hp < z.max_hp * 0.85;
+        if z.look.crawler {
+            // A dragging smear right under the belly.
+            z.trail_t = rng.gen_range(0.05..0.12);
+            let back = pos - Vec2::new(angle.cos(), angle.sin()) * z.r * 0.5;
+            commands.spawn((
+                Sprite {
+                    color: Color::srgba(0.34, 0.02, 0.03, 0.6),
+                    custom_size: Some(Vec2::new(z.r * 1.4, z.r * 0.9)),
+                    ..default()
+                },
+                Transform {
+                    translation: Vec3::new(back.x, back.y, Z_DECAL + 0.2),
+                    rotation: Quat::from_rotation_z(angle),
+                    ..default()
+                },
+                crate::combat::Decal { life: 10.0 },
+            ));
+        } else if wounded {
+            // Bloody footprint, offset to the current foot's side.
+            z.trail_t = rng.gen_range(0.28..0.45);
+            z.foot = -z.foot;
+            let perp = Vec2::new(-angle.sin(), angle.cos()) * z.r * 0.35 * z.foot as f32;
+            let at = pos + perp;
+            commands.spawn((
+                Sprite {
+                    color: Color::srgba(0.30, 0.02, 0.03, 0.55),
+                    custom_size: Some(Vec2::new(z.r * 0.5, z.r * 0.32)),
+                    ..default()
+                },
+                Transform {
+                    translation: Vec3::new(at.x, at.y, Z_DECAL + 0.2),
+                    rotation: Quat::from_rotation_z(angle),
+                    ..default()
+                },
+                crate::combat::Decal { life: 8.0 },
+            ));
+        } else {
+            z.trail_t = rng.gen_range(0.4..0.8);
         }
     }
 }

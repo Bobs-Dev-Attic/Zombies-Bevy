@@ -78,7 +78,11 @@ fn main() {
             (
                 player::player_update,
                 combat::firing_system,
-                enemy::zombie_ai,
+                (
+                    enemy::zombie_ai,
+                    enemy::zombie_separation.after(enemy::zombie_ai),
+                    enemy::zombie_gore_trail.after(enemy::zombie_ai),
+                ),
                 enemy::wave_system,
                 combat::spit_system,
                 combat::projectile_system,
