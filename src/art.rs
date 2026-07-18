@@ -998,31 +998,41 @@ pub fn animate_player(
     // Arms are shoulder pivots at the shoulders; the forearm bend (baked in)
     // brings both hands onto the gun. We drive the shoulder position + rotation.
     if melee {
-        // Cleaver grip: the knife is held in the RIGHT hand like a butcher's
-        // cleaver, right arm slightly bent, blade poised across the chest ready
-        // to sweep. The left arm is bent out with the hand resting near the
-        // waist. A strike whips the knife out and across the chest and back.
+        // Knife in the RIGHT hand, cocked OUT to the right. The left arm hangs
+        // low with the hand near the waist. Attacks alternate between a wide
+        // SLASH (the knife sweeps across the chest) and a forward STAB (the knife
+        // thrusts straight out along the aim), set by `melee_stab`.
         let sw = if p.swing_dur > 0.0 {
             (p.swing_t / p.swing_dur).clamp(0.0, 1.0)
         } else {
             0.0
         };
-        let arc = (sw * std::f32::consts::PI).sin(); // 0 at rest, 1 mid-sweep
-        // Right/knife arm: poised across the chest, sweeping further across mid-swing.
+        let arc = (sw * std::f32::consts::PI).sin(); // 0 at rest, 1 at full extension
+        let stab = p.melee_stab;
+        // Right/knife arm: held out to the right; a slash swings it across, a
+        // stab keeps it aimed forward while the blade thrusts out (below).
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(2.0, -6.0, 0.1);
-            a.rotation = Quat::from_rotation_z(0.55 + arc * 0.85);
+            a.translation = Vec3::new(2.0, -7.0, 0.1);
+            let rot = if stab { -0.7 + arc * 0.35 } else { -0.7 + arc * 2.0 };
+            a.rotation = Quat::from_rotation_z(rot);
         }
-        // Left arm: bent out, hand near the waist (elbow fold applied below).
+        // Left arm: bent out with the hand tucked low by the waist (the upper arm
+        // sits low and the elbow folds hard so the hand drops to centre — see the
+        // forearm-bend section below).
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(-1.0, 6.5, 0.1);
-            a.rotation = Quat::from_rotation_z(1.2);
+            a.translation = Vec3::new(-2.0, 4.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.4);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            // Cleaver in the right hand: blade angled across the chest, whipping
-            // forward-and-across on the swing.
-            wt.translation = Vec3::new(11.0 + arc * 6.0, -4.0 + arc * 9.0, 0.15);
-            wt.rotation = Quat::from_rotation_z(0.95 - arc * 1.9);
+            if stab {
+                // Thrust straight forward along the aim, then retract.
+                wt.translation = Vec3::new(15.0 + arc * 18.0, -8.0 + arc * 4.0, 0.15);
+                wt.rotation = Quat::from_rotation_z(0.4 - arc * 0.45);
+            } else {
+                // Sweep the blade across the chest from right to left-front.
+                wt.translation = Vec3::new(15.0 + arc * 2.0, -8.0 + arc * 17.0, 0.15);
+                wt.rotation = Quat::from_rotation_z(0.5 - arc * 2.2);
+            }
         }
     } else if w.kind == WeaponKind::Launcher {
         // Shoulder-mounted bazooka: the tube rests up on the RIGHT shoulder and
@@ -1113,9 +1123,17 @@ pub fn animate_player(
     // the elbows for its pump/trigger, and a mag-fed reload folds the right elbow
     // down so the hand reaches the magazine well under the grip.
     let (fore_bend_l, mut fore_bend_r) = if melee {
-        // Left elbow folds hard to tuck the hand at the waist; right elbow keeps
-        // a slight bend so the cleaver stays cocked across the chest.
-        (-1.6, 0.7)
+        // Left elbow folds hard so the hand tucks low at the waist. The right
+        // elbow stays bent (knife cocked) for a slash, and straightens out as it
+        // drives forward on a stab.
+        let sw = if p.swing_dur > 0.0 {
+            (p.swing_t / p.swing_dur).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let arc = (sw * std::f32::consts::PI).sin();
+        let r = if p.melee_stab { 0.9 - arc * 0.75 } else { 0.9 };
+        (-1.6, r)
     } else if w.kind == WeaponKind::Launcher {
         // Left arm folds across to brace the tube; right elbow bent up to the grip.
         (-1.1, 0.5)

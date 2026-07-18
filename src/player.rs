@@ -65,6 +65,7 @@ pub struct Player {
     pub stun: f32, // knocked-out/concussed timer — no control while > 0
     pub swing_t: f32,
     pub swing_dur: f32,
+    pub melee_stab: bool, // alternates each melee attack: false = slash, true = stab
     pub kills: u32,
 }
 
@@ -113,6 +114,7 @@ impl Default for Player {
             stun: 0.0,
             swing_t: 0.0,
             swing_dur: 0.22,
+            melee_stab: false,
             kills: 0,
         }
     }
