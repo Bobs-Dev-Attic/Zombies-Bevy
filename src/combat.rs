@@ -275,7 +275,13 @@ pub fn firing_system(
     spawn_muzzle_flash(&mut commands, muzzle, angle, w.explosive > 0.0, &mut rng);
 
     for _ in 0..w.pellets {
-        let a = angle + rng.gen_range(-w.spread..w.spread);
+        // Guard against a zero-spread weapon (e.g. the bazooka): sampling an
+        // empty `-0.0..0.0` range panics rand and would crash the game.
+        let a = if w.spread > 0.0 {
+            angle + rng.gen_range(-w.spread..w.spread)
+        } else {
+            angle
+        };
         commands.spawn((
             Sprite::from_color(
                 if w.explosive > 0.0 {

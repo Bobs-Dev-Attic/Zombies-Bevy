@@ -4,6 +4,18 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.10.1]
+
+### Fixed
+- **Bazooka no longer crashes the game** — firing a zero-spread weapon sampled an
+  empty random range (`-0.0..0.0`) and panicked, freezing everything. Zero-spread
+  weapons now fire straight without sampling.
+
+### Changed
+- **Corrected shotgun hold** — the butt now tucks into the right armpit with the
+  barrel angled up so its tip is centred; the left arm starts under the left
+  shoulder on the fore-end and the right arm is bent inward to the grip.
+
 ## [0.10.0]
 
 ### Added
