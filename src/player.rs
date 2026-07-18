@@ -83,7 +83,7 @@ impl Default for Player {
             base_speed: 205.0,
             angle: 0.0,
             vel: Vec2::ZERO,
-            r: 11.0,
+            r: 15.0, // body collider — kept wide so arms/gun don't bury into walls
             current: 2, // start with the pistol
             clip,
             rounds: 96,

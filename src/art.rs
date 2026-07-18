@@ -1437,19 +1437,24 @@ pub fn animate_zombies(
         }
 
         if crawler {
-            // Dragging: the arms reach far forward and haul the body along while
-            // the legs trail limply behind, knees loose.
-            let pull = (z.frame * 1.6).sin();
+            // Dragging: the arms crawl — each one in turn reaches out ahead, plants,
+            // and hauls the body forward while the other recovers, legs trailing.
+            let c = z.frame * 2.4;
+            let la = c.sin(); // left-arm cycle
+            let ra = (c + std::f32::consts::PI).sin(); // right opposite
+            let reach_l = la.max(0.0); // 0 = pulling back, 1 = reaching ahead
+            let reach_r = ra.max(0.0);
             if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-                a.translation = Vec3::new(4.0 * s, 4.5 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(-0.15 + pull * 0.18);
+                a.translation = Vec3::new((3.0 + reach_l * 7.0) * s, 6.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(0.15 - la * 0.35);
             }
             if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-                a.translation = Vec3::new(4.0 * s, -4.5 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(0.15 - pull * 0.18);
+                a.translation = Vec3::new((3.0 + reach_r * 7.0) * s, -6.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(-0.15 + ra * 0.35);
             }
-            set_bend(&mut tf_q, limbs.fore_l, -0.1);
-            set_bend(&mut tf_q, limbs.fore_r, 0.1);
+            // Elbows straighten as the arm reaches out, fold as it pulls back.
+            set_bend(&mut tf_q, limbs.fore_l, -0.7 + reach_l * 0.55);
+            set_bend(&mut tf_q, limbs.fore_r, 0.7 - reach_r * 0.55);
             // Legs trail behind the body (pivots rotated to point backward).
             if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
                 l.translation = Vec3::new(-5.0 * s, 3.5 * s, -0.2);
@@ -1515,13 +1520,15 @@ pub fn animate_zombies(
             let grasp = (z.frame * 2.4 + z.arm_phase).sin() * 0.14; // twitchy reach
             let ll = |a: f32, b: f32| a + (b - a) * z.reach_l;
             let lr = |a: f32, b: f32| a + (b - a) * z.reach_r;
+            // Arms hang from under the shoulders (the torso edges) and spread
+            // wider out to the sides.
             if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-                a.translation = Vec3::new(3.0 * s, 6.0 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(ll(0.35 + swing_l, -0.12 + grasp));
+                a.translation = Vec3::new(1.0 * s, 8.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(ll(0.45 + swing_l, -0.1 + grasp));
             }
             if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-                a.translation = Vec3::new(3.0 * s, -6.0 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(lr(-0.35 + swing_r, 0.12 - grasp));
+                a.translation = Vec3::new(1.0 * s, -8.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(lr(-0.45 + swing_r, 0.1 - grasp));
             }
             // Elbows fold in when shambling, straighten out when reaching.
             set_bend(&mut tf_q, limbs.fore_l, ll(-0.85 - swing_l * 0.4, -0.2));

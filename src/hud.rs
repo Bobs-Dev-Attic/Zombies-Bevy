@@ -473,6 +473,8 @@ pub fn options_slider(
 pub fn start_game(
     mut commands: Commands,
     art: Res<crate::art::Art>,
+    mut images: ResMut<Assets<Image>>,
+    mut obj: ResMut<crate::nav::Objective>,
     mut score: ResMut<Score>,
     mut waves: ResMut<WaveState>,
     mut spawner: ResMut<crate::gear::PickupSpawner>,
@@ -486,8 +488,10 @@ pub fn start_game(
     let spawn = world.spawn;
     // Scatter starter gear before we hand the world to the ECS as a resource.
     crate::gear::scatter_pickups(&mut commands, &art, &world, spawn);
-    // Dress the arena: debris, blood pools, corpses, flies, flickering lights.
+    // Dress the arena: debris, blood pools, corpses, flies, crows.
     crate::ambient::scatter_ambient(&mut commands, &art, &world, spawn);
+    // Objective, direction arrow and minimap (needs the world in hand).
+    crate::nav::build_nav(&mut commands, &mut images, &world, &mut obj, spawn);
     commands.insert_resource(world);
 
     // Player.
