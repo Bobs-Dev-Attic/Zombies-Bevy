@@ -1,6 +1,6 @@
 use crate::common::*;
 use crate::enemy::{NewZombieRadius, Zombie};
-use crate::player::Player;
+use crate::player::{BodyGear, HeadGear, Player};
 use crate::weapons::WeaponKind;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
@@ -26,6 +26,17 @@ pub struct NeedsRig;
 #[derive(Component)]
 pub struct ReloadRing {
     pub ticks: Vec<Entity>,
+}
+
+/// Toggleable roots for swappable gear, so equipping/breaking gear just flips
+/// visibility instead of rebuilding the rig.
+#[derive(Component)]
+pub struct GearVisuals {
+    pub cap_root: Entity,
+    pub helmet_root: Entity,
+    pub armor_root: Entity,
+    pub backpack_root: Entity,
+    pub hair: Entity,
 }
 
 const RELOAD_TICKS: usize = 14;
@@ -182,6 +193,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let body = commands.spawn((Transform::default(), Visibility::default())).id();
 
     // ---- Backpack (behind the torso, toward the back = -X). Blocky. ----
+    let backpack_root = commands.spawn((Transform::default(), Visibility::default())).id();
     let pack_base = commands.spawn(rect(pack, 17.0, 23.0, -0.35)).id();
     commands.entity(pack_base).insert(Transform::from_xyz(-8.5, 0.0, -0.35));
     let pack_lid = commands.spawn(rect(pack_dark, 12.0, 9.0, -0.34)).id();
@@ -199,6 +211,9 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     commands.entity(strap_a).insert(Transform::from_xyz(2.0, 6.0, 0.06));
     let strap_b = commands.spawn(rect(strap, 20.0, 3.2, 0.06)).id();
     commands.entity(strap_b).insert(Transform::from_xyz(2.0, -6.0, 0.06));
+    commands.entity(backpack_root).add_children(&[
+        pack_base, pack_lid, pack_seam_v, pack_seam_h, buckle_a, buckle_b, strap_a, strap_b,
+    ]);
 
     // ---- Legs ----
     let leg_l = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
@@ -217,9 +232,27 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -8.0, 0.03));
     let collar = commands.spawn(rect(jacket_dark, 5.0, 10.0, 0.04)).id();
     commands.entity(collar).insert(Transform::from_xyz(8.0, 0.0, 0.04));
+
+    // Body-armour plate carrier (toggled on when equipped).
+    let armor_root = commands.spawn((Transform::default(), Visibility::Hidden)).id();
+    let vest = commands.spawn(rect(Color::srgb(0.15, 0.16, 0.14), 19.0, 17.0, 0.05)).id();
+    let plate = commands.spawn(rect(Color::srgb(0.22, 0.24, 0.20), 12.0, 12.0, 0.06)).id();
+    commands.entity(plate).insert(Transform::from_xyz(3.0, 0.0, 0.06));
+    let pouch_a = commands.spawn(rect(Color::srgb(0.12, 0.13, 0.11), 5.0, 6.0, 0.07)).id();
+    commands.entity(pouch_a).insert(Transform::from_xyz(-2.0, 5.0, 0.07));
+    let pouch_b = commands.spawn(rect(Color::srgb(0.12, 0.13, 0.11), 5.0, 6.0, 0.07)).id();
+    commands.entity(pouch_b).insert(Transform::from_xyz(-2.0, -5.0, 0.07));
+    let a_strap_l = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.09), 6.0, 3.0, 0.07)).id();
+    commands.entity(a_strap_l).insert(Transform::from_xyz(6.0, 7.0, 0.07));
+    let a_strap_r = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.09), 6.0, 3.0, 0.07)).id();
+    commands.entity(a_strap_r).insert(Transform::from_xyz(6.0, -7.0, 0.07));
+    commands
+        .entity(armor_root)
+        .add_children(&[vest, plate, pouch_a, pouch_b, a_strap_l, a_strap_r]);
+
     commands
         .entity(torso)
-        .add_children(&[back_block, chest, shoulder_l, shoulder_r, collar]);
+        .add_children(&[back_block, chest, shoulder_l, shoulder_r, collar, armor_root]);
 
     // ---- Arms: two rectangle segments hinged at a circular elbow, plus a
     // circular hand. `bend` angles the forearm inward so both hands meet the
@@ -264,11 +297,16 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let arm_l = build_arm(commands, -0.5);
     let arm_r = build_arm(commands, 0.5);
 
-    // ---- Head + padded hat ----
+    // ---- Head, with swappable headgear roots ----
     let head = commands.spawn(ellipse(art, skin, 14.5, 14.5, 0.25)).id();
     let brow = commands.spawn(ellipse(art, skin_dark, 12.0, 5.0, 0.255)).id();
     commands.entity(brow).insert(Transform::from_xyz(2.0, 0.0, 0.255));
-    // Bigger, padded/segmented hat on the crown (behind the face).
+    // Short hair, shown only when bare-headed (peeks from behind the face).
+    let hair = commands.spawn(ellipse(art, Color::srgb(0.12, 0.09, 0.07), 15.0, 14.0, -0.06)).id();
+    commands.entity(hair).insert(Transform::from_xyz(-3.0, 0.0, -0.06));
+
+    // Soft padded cap (default; no protection).
+    let cap_root = commands.spawn((Transform::default(), Visibility::default())).id();
     let hat_base = commands.spawn(ellipse(art, hat, 18.0, 17.0, -0.05)).id();
     commands.entity(hat_base).insert(Transform::from_xyz(-4.0, 0.0, -0.05));
     let hat_brim = commands.spawn(ellipse(art, hat_dark, 8.0, 16.0, -0.045)).id();
@@ -284,8 +322,24 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let hs3 = commands.spawn(seg(-7.5, 2.5, 4.0, 3.0)).id();
     let hs4 = commands.spawn(seg(-3.0, 6.0, 3.2, 5.0)).id();
     commands
+        .entity(cap_root)
+        .add_children(&[hat_base, hat_brim, hs1, hs2, hs3, hs4]);
+
+    // Hard combat helmet (protective; toggled on when equipped).
+    let helmet_root = commands.spawn((Transform::default(), Visibility::Hidden)).id();
+    let helm_dome = commands.spawn(ellipse(art, Color::srgb(0.22, 0.26, 0.19), 19.0, 18.0, -0.04)).id();
+    commands.entity(helm_dome).insert(Transform::from_xyz(-2.5, 0.0, -0.04));
+    let helm_rim = commands.spawn(rect(Color::srgb(0.13, 0.15, 0.12), 4.0, 18.0, 0.052)).id();
+    commands.entity(helm_rim).insert(Transform::from_xyz(6.0, 0.0, 0.052));
+    let helm_ridge = commands.spawn(rect(Color::srgb(0.15, 0.17, 0.13), 14.0, 2.4, -0.035)).id();
+    commands.entity(helm_ridge).insert(Transform::from_xyz(-2.5, 0.0, -0.035));
+    commands
+        .entity(helmet_root)
+        .add_children(&[helm_dome, helm_rim, helm_ridge]);
+
+    commands
         .entity(head)
-        .add_children(&[brow, hat_base, hat_brim, hs1, hs2, hs3, hs4]);
+        .add_children(&[hair, brow, cap_root, helmet_root]);
 
     // ---- Gunmetal 9mm: slide + grip ----
     let weapon = commands.spawn(rect(gun, 18.0, 4.5, 0.15)).id();
@@ -305,8 +359,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         .id();
 
     commands.entity(body).add_children(&[
-        pack_base, pack_lid, pack_seam_v, pack_seam_h, buckle_a, buckle_b,
-        leg_l, leg_r, torso, strap_a, strap_b, arm_l, arm_r, weapon, head, flash,
+        backpack_root, leg_l, leg_r, torso, arm_l, arm_r, weapon, head, flash,
     ]);
 
     // Reload cycle indicator: a ring of ticks floating above the head. Child of
@@ -340,6 +393,13 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         leg_r,
         weapon,
         flash,
+    });
+    commands.entity(root).insert(GearVisuals {
+        cap_root,
+        helmet_root,
+        armor_root,
+        backpack_root,
+        hair,
     });
 }
 
@@ -421,25 +481,56 @@ pub fn animate_player(
         b.rotation = Quat::from_rotation_z(angle);
     }
 
-    let run_amp = if p.running { 6.0 } else { 4.0 };
-    let stride = (p.walk_frame).sin();
-    let bob = if p.moving { p.walk_frame.sin().abs() } else { (p.idle_t * 2.2).sin() * 0.25 };
+    let stamina_frac = (p.stamina / p.max_stamina).clamp(0.0, 1.0);
+    let stride = p.walk_frame.sin();
+    // Bigger, springier gait; running throws the legs much further.
+    let leg_amp = if p.running { 13.0 } else { 8.5 };
+    let lift = if p.running { 3.0 } else { 1.8 };
+    let sway = if p.running { 0.16 } else { 0.10 };
 
-    // Legs scissor along local X (fore/aft), offset on perpendicular (local Y).
-    if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
-        l.translation.x = -3.0 + stride * run_amp;
-        l.translation.y = 5.0;
-    }
-    if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
-        r.translation.x = -3.0 - stride * run_amp;
-        r.translation.y = -5.0;
-    }
-    if let Ok(mut t) = tf_q.get_mut(rig.torso) {
-        t.translation.y = bob * 0.6;
-    }
-    if let Ok(mut h) = tf_q.get_mut(rig.head) {
-        h.translation.x = 4.0;
-        h.translation.y = bob * 0.5;
+    if p.moving {
+        // Legs scissor fore/aft (local X) and lift a little as they swing.
+        if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
+            l.translation.x = -3.0 + stride * leg_amp;
+            l.translation.y = 5.0 + stride.max(0.0) * lift;
+        }
+        if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
+            r.translation.x = -3.0 - stride * leg_amp;
+            r.translation.y = -5.0 - (-stride).max(0.0) * lift;
+        }
+        // Torso bobs vertically and rocks side to side (twice per stride).
+        let bob = p.walk_frame.sin().abs() * if p.running { 2.4 } else { 1.5 };
+        if let Ok(mut t) = tf_q.get_mut(rig.torso) {
+            t.translation.y = bob;
+            t.scale = Vec3::ONE;
+            t.rotation = Quat::from_rotation_z((p.walk_frame).sin() * sway);
+        }
+        if let Ok(mut h) = tf_q.get_mut(rig.head) {
+            h.translation.x = 4.0;
+            h.translation.y = bob * 0.7;
+        }
+    } else {
+        // Idle: breathing. Rate + depth rise as stamina drops (and when winded).
+        let rate = 1.6 + (1.0 - stamina_frac) * 5.5 + if p.exhausted { 2.5 } else { 0.0 };
+        let depth = 0.03 + (1.0 - stamina_frac) * 0.06;
+        let breath = (p.idle_t * rate).sin();
+        if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
+            l.translation.x = -3.0;
+            l.translation.y = 5.0;
+        }
+        if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
+            r.translation.x = -3.0;
+            r.translation.y = -5.0;
+        }
+        if let Ok(mut t) = tf_q.get_mut(rig.torso) {
+            t.translation.y = breath * 0.6;
+            t.scale = Vec3::new(1.0, 1.0 + breath * depth, 1.0);
+            t.rotation = Quat::IDENTITY;
+        }
+        if let Ok(mut h) = tf_q.get_mut(rig.head) {
+            h.translation.x = 4.0;
+            h.translation.y = breath * 0.8;
+        }
     }
 
     // Arms + weapon depend on weapon type / recoil / swing.
@@ -496,6 +587,26 @@ pub fn animate_player(
     if let Ok(mut s) = sprite_q.get_mut(rig.head) {
         s.color = mix(skin, Color::WHITE, flash * 0.7);
     }
+}
+
+/// Show/hide swappable gear groups to match the player's equipped gear.
+pub fn update_gear_visuals(
+    player_q: Query<(&Player, &GearVisuals)>,
+    mut vis_q: Query<&mut Visibility>,
+) {
+    let Ok((p, g)) = player_q.single() else {
+        return;
+    };
+    let mut set = |e: Entity, on: bool| {
+        if let Ok(mut v) = vis_q.get_mut(e) {
+            *v = if on { Visibility::Inherited } else { Visibility::Hidden };
+        }
+    };
+    set(g.cap_root, p.head_gear == HeadGear::Cap);
+    set(g.helmet_root, p.head_gear == HeadGear::Helmet);
+    set(g.hair, p.head_gear == HeadGear::Bare);
+    set(g.armor_root, p.body_gear == BodyGear::Armor);
+    set(g.backpack_root, p.has_backpack);
 }
 
 /// Light up the reload ring proportionally to the current reload's progress.

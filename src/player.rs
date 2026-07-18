@@ -4,6 +4,21 @@ use crate::weapons::{weapon, Ammo, WeaponKind, WEAPONS};
 use crate::world::World;
 use bevy::prelude::*;
 
+/// Head slot: a soft cap (no protection), a hard helmet (protection), or bare.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HeadGear {
+    Bare,
+    Cap,
+    Helmet,
+}
+
+/// Body slot: the plain field jacket, or a plate carrier / body armour.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BodyGear {
+    Jacket,
+    Armor,
+}
+
 #[derive(Component)]
 pub struct Player {
     pub health: f32,
@@ -25,6 +40,16 @@ pub struct Player {
     pub reloading: f32,
     pub reload_total: f32,
     pub exhausted: bool,
+
+    // gear / protection
+    pub head_gear: HeadGear,
+    pub body_gear: BodyGear,
+    pub has_backpack: bool,
+    pub helmet_dura: f32,
+    pub helmet_max: f32,
+    pub armor_dura: f32,
+    pub armor_max: f32,
+    pub armor_flash: f32, // brief flash when armour soaks a hit
 
     // animation / feedback
     pub walk_frame: f32,
@@ -64,6 +89,14 @@ impl Default for Player {
             reloading: 0.0,
             reload_total: 0.0,
             exhausted: false,
+            head_gear: HeadGear::Cap,
+            body_gear: BodyGear::Jacket,
+            has_backpack: true,
+            helmet_dura: 0.0,
+            helmet_max: 0.0,
+            armor_dura: 0.0,
+            armor_max: 0.0,
+            armor_flash: 0.0,
             walk_frame: 0.0,
             idle_t: 0.0,
             moving: false,
@@ -113,7 +146,10 @@ impl Player {
             f *= 0.6;
         }
         if sprinting && !self.exhausted && self.stamina > 0.0 {
-            f *= 1.5;
+            // Top sprint speed fades as stamina drops: full boost when fresh,
+            // tapering toward a jog as the bar empties.
+            let sf = (self.stamina / self.max_stamina).clamp(0.0, 1.0);
+            f *= 1.15 + 0.45 * sf;
         }
         f
     }
@@ -122,9 +158,53 @@ impl Player {
         if self.invuln > 0.0 {
             return;
         }
-        self.health = (self.health - amount).clamp(0.0, self.max_health);
+        let mut dmg = amount;
+        // A helmet soaks a slice of every blow until it shatters.
+        if self.head_gear == HeadGear::Helmet && self.helmet_dura > 0.0 && dmg > 0.0 {
+            let soak = self.helmet_dura.min(dmg * 0.4);
+            self.helmet_dura -= soak;
+            dmg -= soak;
+            self.armor_flash = 0.18;
+            if self.helmet_dura <= 0.001 {
+                self.helmet_dura = 0.0;
+                self.head_gear = HeadGear::Bare; // helmet destroyed
+            }
+        }
+        // Body armour soaks the bulk of what's left, then breaks away.
+        if self.body_gear == BodyGear::Armor && self.armor_dura > 0.0 && dmg > 0.0 {
+            let soak = self.armor_dura.min(dmg * 0.6);
+            self.armor_dura -= soak;
+            dmg -= soak;
+            self.armor_flash = 0.18;
+            if self.armor_dura <= 0.001 {
+                self.armor_dura = 0.0;
+                self.body_gear = BodyGear::Jacket; // armour destroyed
+            }
+        }
+        self.health = (self.health - dmg).clamp(0.0, self.max_health);
         self.hurt_flash = 0.18;
         self.invuln = 0.3;
+    }
+
+    pub fn equip_helmet(&mut self, dura: f32) {
+        self.head_gear = HeadGear::Helmet;
+        self.helmet_dura = dura;
+        self.helmet_max = dura;
+        self.armor_flash = 0.2;
+    }
+    pub fn equip_armor(&mut self, dura: f32) {
+        self.body_gear = BodyGear::Armor;
+        self.armor_dura = dura;
+        self.armor_max = dura;
+        self.armor_flash = 0.2;
+    }
+    pub fn equip_cap(&mut self) {
+        self.head_gear = HeadGear::Cap;
+        self.helmet_dura = 0.0;
+        self.helmet_max = 0.0;
+    }
+    pub fn heal_by(&mut self, amount: f32) {
+        self.health = (self.health + amount).clamp(0.0, self.max_health);
     }
 
     pub fn start_reload(&mut self) -> bool {
@@ -194,6 +274,7 @@ pub fn player_update(
     p.invuln = (p.invuln - dt).max(0.0);
     p.recoil = (p.recoil - dt * 7.0).max(0.0);
     p.swing_t = (p.swing_t - dt).max(0.0);
+    p.armor_flash = (p.armor_flash - dt).max(0.0);
 
     // Weapon switching.
     // (handled here so state is centralized)

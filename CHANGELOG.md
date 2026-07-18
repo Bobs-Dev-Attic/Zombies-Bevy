@@ -4,6 +4,28 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.5.0]
+
+### Added
+- **Equipment system** — the player's head, body and back are gear slots that
+  can change: soft **cap** ↔ hard **helmet** ↔ **bare head**, field **jacket** ↔
+  **body armour**, backpack on/off. The visuals swap to match.
+- **Gear pickups** — helmets, body armour and medkits are scattered on the map
+  and trickle in during play; walk over one to equip it (medkits heal).
+- **Damage reduction** — a helmet soaks part of each hit and body armour soaks
+  the bulk; both take the damage instead of your health.
+- **Wear-and-tear indicators** — HUD durability bars for the helmet and armour
+  that deplete and shift green → amber → red; when a piece is used up it breaks
+  and is removed (helmet gone → bare head).
+
+### Changed
+- **Punchier walk/run** — bigger leg throw, vertical bob and a side-to-side body
+  rock, more pronounced at a sprint.
+- **Idle breathing** — the player visibly breathes when standing still, and the
+  breathing quickens and deepens as stamina drops (fastest when winded).
+- **Stamina-limited sprint** — top running speed now fades as the stamina bar
+  empties instead of being a flat boost.
+
 ## [0.4.0]
 
 ### Changed

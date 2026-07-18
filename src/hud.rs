@@ -14,10 +14,23 @@ pub struct MenuUi;
 #[derive(Component)]
 pub struct GameOverUi;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BarKind {
+    Health,
+    Stamina,
+    Helmet,
+    Armor,
+}
 #[derive(Component)]
-pub struct HealthFill;
+pub struct Bar(pub BarKind);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GearKind {
+    Helmet,
+    Armor,
+}
 #[derive(Component)]
-pub struct StaminaFill;
+pub struct GearRow(pub GearKind);
 #[derive(Component)]
 pub struct AmmoText;
 #[derive(Component)]
@@ -81,13 +94,22 @@ pub fn teardown_menu(mut commands: Commands, q: Query<Entity, With<MenuUi>>) {
     }
 }
 
-pub fn start_game(mut commands: Commands, mut score: ResMut<Score>, mut waves: ResMut<WaveState>) {
+pub fn start_game(
+    mut commands: Commands,
+    art: Res<crate::art::Art>,
+    mut score: ResMut<Score>,
+    mut waves: ResMut<WaveState>,
+    mut spawner: ResMut<crate::gear::PickupSpawner>,
+) {
     *score = Score::default();
     *waves = WaveState::default();
+    *spawner = crate::gear::PickupSpawner::default();
 
     let world = generate_world();
     spawn_world_sprites_tagged(&mut commands, &world);
     let spawn = world.spawn;
+    // Scatter starter gear before we hand the world to the ECS as a resource.
+    crate::gear::scatter_pickups(&mut commands, &art, &world, spawn);
     commands.insert_resource(world);
 
     // Player.
@@ -133,7 +155,7 @@ fn spawn_hud(commands: &mut Commands) {
                 b.spawn((
                     Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
                     BackgroundColor(Color::srgb(0.80, 0.18, 0.16)),
-                    HealthFill,
+                    Bar(BarKind::Health),
                 ));
             });
             // Stamina
@@ -145,8 +167,66 @@ fn spawn_hud(commands: &mut Commands) {
                 b.spawn((
                     Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
                     BackgroundColor(Color::srgb(0.85, 0.75, 0.25)),
-                    StaminaFill,
+                    Bar(BarKind::Stamina),
                 ));
+            });
+            // Helmet durability (wear-and-tear); hidden when not worn.
+            p.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    display: Display::None,
+                    ..default()
+                },
+                GearRow(GearKind::Helmet),
+            ))
+            .with_children(|r| {
+                r.spawn((
+                    Text::new("HELM"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(Color::srgb(0.65, 0.7, 0.8)),
+                ));
+                r.spawn((
+                    Node { width: Val::Px(200.0), height: Val::Px(8.0), ..default() },
+                    BackgroundColor(PANEL),
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                        BackgroundColor(Color::srgb(0.45, 0.6, 0.85)),
+                        Bar(BarKind::Helmet),
+                    ));
+                });
+            });
+            // Body-armour durability; hidden when not worn.
+            p.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    display: Display::None,
+                    ..default()
+                },
+                GearRow(GearKind::Armor),
+            ))
+            .with_children(|r| {
+                r.spawn((
+                    Text::new("ARMR"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(Color::srgb(0.6, 0.8, 0.65)),
+                ));
+                r.spawn((
+                    Node { width: Val::Px(200.0), height: Val::Px(8.0), ..default() },
+                    BackgroundColor(PANEL),
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                        BackgroundColor(Color::srgb(0.35, 0.75, 0.5)),
+                        Bar(BarKind::Armor),
+                    ));
+                });
             });
             // Weapon / ammo
             p.spawn((
@@ -191,19 +271,47 @@ pub fn update_hud(
     player_q: Query<&Player>,
     score: Res<Score>,
     waves: Res<WaveState>,
-    mut health_q: Query<&mut Node, (With<HealthFill>, Without<StaminaFill>)>,
-    mut stamina_q: Query<&mut Node, (With<StaminaFill>, Without<HealthFill>)>,
+    mut bars_q: Query<(&Bar, &mut Node, &mut BackgroundColor), Without<GearRow>>,
+    mut rows_q: Query<(&GearRow, &mut Node), Without<Bar>>,
     mut ammo_q: Query<&mut Text, (With<AmmoText>, Without<WaveText>)>,
     mut wave_q: Query<&mut Text, (With<WaveText>, Without<AmmoText>)>,
 ) {
     let Ok(p) = player_q.single() else {
         return;
     };
-    if let Ok(mut n) = health_q.single_mut() {
-        n.width = Val::Percent((p.health / p.max_health * 100.0).clamp(0.0, 100.0));
+    // Fills (width, and wear-based colour for gear).
+    for (bar, mut node, mut bg) in bars_q.iter_mut() {
+        let frac = match bar.0 {
+            BarKind::Health => p.health / p.max_health,
+            BarKind::Stamina => p.stamina / p.max_stamina,
+            BarKind::Helmet => {
+                if p.helmet_max > 0.0 { p.helmet_dura / p.helmet_max } else { 0.0 }
+            }
+            BarKind::Armor => {
+                if p.armor_max > 0.0 { p.armor_dura / p.armor_max } else { 0.0 }
+            }
+        }
+        .clamp(0.0, 1.0);
+        node.width = Val::Percent(frac * 100.0);
+        // Gear bars shift green -> amber -> red as they wear down.
+        if matches!(bar.0, BarKind::Helmet | BarKind::Armor) {
+            let (r, g, b) = if frac > 0.5 {
+                let t = (frac - 0.5) / 0.5;
+                (0.85 - 0.5 * t, 0.55 + 0.2 * t, 0.25)
+            } else {
+                let t = frac / 0.5;
+                (0.85, 0.20 + 0.35 * t, 0.20)
+            };
+            bg.0 = Color::srgb(r, g, b);
+        }
     }
-    if let Ok(mut n) = stamina_q.single_mut() {
-        n.width = Val::Percent((p.stamina / p.max_stamina * 100.0).clamp(0.0, 100.0));
+    // Rows shown only when the gear is worn.
+    for (row, mut node) in rows_q.iter_mut() {
+        let show = match row.0 {
+            GearKind::Helmet => p.head_gear == crate::player::HeadGear::Helmet,
+            GearKind::Armor => p.body_gear == crate::player::BodyGear::Armor,
+        };
+        node.display = if show { Display::Flex } else { Display::None };
     }
     if let Ok(mut t) = ammo_q.single_mut() {
         let w = p.weapon();
@@ -284,8 +392,17 @@ pub fn cleanup_run(
     projectiles: Query<Entity, With<crate::combat::Projectile>>,
     particles: Query<Entity, With<crate::combat::Particle>>,
     decals: Query<Entity, With<crate::combat::Decal>>,
+    pickups: Query<Entity, With<crate::gear::Pickup>>,
 ) {
-    for e in q.iter().chain(tiles.iter()).chain(zombies.iter()).chain(projectiles.iter()).chain(particles.iter()).chain(decals.iter()) {
+    for e in q
+        .iter()
+        .chain(tiles.iter())
+        .chain(zombies.iter())
+        .chain(projectiles.iter())
+        .chain(particles.iter())
+        .chain(decals.iter())
+        .chain(pickups.iter())
+    {
         commands.entity(e).try_despawn();
     }
 }
