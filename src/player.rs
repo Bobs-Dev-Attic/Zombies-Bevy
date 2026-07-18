@@ -383,10 +383,12 @@ pub fn player_update(
 pub fn touch_autoaim(
     time: Res<Time>,
     input: Res<InputState>,
+    settings: Res<Settings>,
     mut player_q: Query<(&mut Player, &Transform), Without<crate::enemy::Zombie>>,
     zombies: Query<&Transform, With<crate::enemy::Zombie>>,
 ) {
-    if !input.touch_mode {
+    // No assist below a whisker of slider → fully manual (face move direction).
+    if !input.touch_mode || settings.aim_assist < 0.02 {
         return;
     }
     let dt = time.delta_secs();
@@ -406,7 +408,9 @@ pub fn touch_autoaim(
         if d2 < 620.0 * 620.0 {
             let dv = zp - pos;
             let target = dv.y.atan2(dv.x);
-            p.angle = angle_lerp(p.angle, target, (dt * 8.0).clamp(0.0, 1.0));
+            // Higher accuracy → snappier lock-on.
+            let rate = 2.0 + 16.0 * settings.aim_assist;
+            p.angle = angle_lerp(p.angle, target, (dt * rate).clamp(0.0, 1.0));
         }
     }
 }

@@ -4,6 +4,18 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.7.0]
+
+### Added
+- **Options menu** — a new PLAY / OPTIONS menu with an **Aim Assist accuracy
+  slider** (0% = fully manual aiming, 100% = instant lock-on). Adjust it by
+  dragging, tapping − / +, or with the ← / → keys; touch auto-aim snappiness
+  now follows the slider.
+
+### Changed
+- **Pixelated muzzle flash** — replaced the soft gradient glow with a blocky
+  star of squares that flashes from the barrel tip, plus forward sparks.
+
 ## [0.6.0]
 
 ### Added

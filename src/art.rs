@@ -377,14 +377,10 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let grip = commands.spawn(rect(Color::srgb(0.06, 0.06, 0.07), 5.0, 6.0, 0.14)).id();
     commands.entity(grip).insert(Transform::from_xyz(-4.0, 3.0, 0.14));
     commands.entity(weapon).add_child(grip);
+    // Small square flash at the barrel tip (pixelated, not a soft glow).
     let flash = commands
         .spawn((
-            Sprite {
-                image: art.soft.clone(),
-                color: Color::srgba(1.0, 0.85, 0.4, 0.0),
-                custom_size: Some(Vec2::new(24.0, 24.0)),
-                ..default()
-            },
+            Sprite::from_color(Color::srgba(1.0, 0.9, 0.5, 0.0), Vec2::splat(6.0)),
             Transform::from_xyz(24.0, 0.0, 0.3),
         ))
         .id();
