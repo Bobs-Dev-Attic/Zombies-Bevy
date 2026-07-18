@@ -22,6 +22,14 @@ pub struct Art {
 #[derive(Component)]
 pub struct NeedsRig;
 
+/// A ring of ticks above the player that fills as a reload cycles.
+#[derive(Component)]
+pub struct ReloadRing {
+    pub ticks: Vec<Entity>,
+}
+
+const RELOAD_TICKS: usize = 14;
+
 /// Entity handles to a character's body parts.
 #[derive(Component)]
 pub struct Rig {
@@ -212,6 +220,26 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     commands
         .entity(body)
         .add_children(&[leg_l, leg_r, torso, yoke, arm_l, arm_r, weapon, head, flash]);
+
+    // Reload cycle indicator: a ring of ticks floating above the head. Child of
+    // root (not body) so it stays screen-aligned regardless of aim.
+    let mut ticks = Vec::with_capacity(RELOAD_TICKS);
+    let radius = 12.0;
+    let cy = 26.0;
+    for i in 0..RELOAD_TICKS {
+        // Start at the top, go clockwise.
+        let a = std::f32::consts::FRAC_PI_2 - (i as f32 / RELOAD_TICKS as f32) * std::f32::consts::TAU;
+        let t = commands
+            .spawn((
+                Sprite::from_color(Color::srgba(1.0, 1.0, 1.0, 0.0), Vec2::splat(3.6)),
+                Transform::from_xyz(a.cos() * radius, cy + a.sin() * radius, 2.0),
+            ))
+            .id();
+        ticks.push(t);
+    }
+    commands.entity(root).add_children(&ticks);
+    commands.entity(root).insert(ReloadRing { ticks });
+
     commands.entity(root).add_children(&[shadow, body]);
     commands.entity(root).insert(Rig {
         body,
@@ -377,6 +405,35 @@ pub fn animate_player(
     }
     if let Ok(mut s) = sprite_q.get_mut(rig.head) {
         s.color = mix(skin, Color::WHITE, flash * 0.7);
+    }
+}
+
+/// Light up the reload ring proportionally to the current reload's progress.
+pub fn animate_reload_ring(
+    player_q: Query<(&Player, &ReloadRing)>,
+    mut sprite_q: Query<&mut Sprite>,
+) {
+    let Ok((p, ring)) = player_q.single() else {
+        return;
+    };
+    let active = p.reloading > 0.0;
+    let progress = p.reload_progress();
+    let n = ring.ticks.len();
+    for (i, &e) in ring.ticks.iter().enumerate() {
+        if let Ok(mut s) = sprite_q.get_mut(e) {
+            if !active {
+                s.color = Color::srgba(1.0, 1.0, 1.0, 0.0);
+                continue;
+            }
+            let frac = (i as f32 + 1.0) / n as f32;
+            if frac <= progress {
+                // Filled tick — warm amber, fully lit.
+                s.color = Color::srgba(1.0, 0.82, 0.30, 0.95);
+            } else {
+                // Pending tick — dim outline so the full cycle is visible.
+                s.color = Color::srgba(0.9, 0.9, 1.0, 0.18);
+            }
+        }
     }
 }
 

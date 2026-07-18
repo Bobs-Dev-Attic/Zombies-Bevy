@@ -85,7 +85,7 @@ fn main() {
         // animation runs after movement/AI so parts track the latest state
         .add_systems(
             Update,
-            (art::animate_player, art::animate_zombies)
+            (art::animate_player, art::animate_reload_ring, art::animate_zombies)
                 .after(player::player_update)
                 .run_if(in_state(GameState::Playing)),
         )

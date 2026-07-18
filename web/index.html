@@ -58,6 +58,11 @@
         font-size: 15px;
         color: #6c6c7a;
       }
+      #loader .ver {
+        font-size: 13px;
+        color: #45454f;
+        letter-spacing: 2px;
+      }
       .bar {
         width: min(320px, 70vw);
         height: 6px;
@@ -108,6 +113,8 @@
       <h1>ZOMBIES</h1>
       <p>Escape the Horde — loading…</p>
       <div class="bar"><span></span></div>
+      <!-- Keep this in sync with the version in Cargo.toml. -->
+      <p class="ver">v0.2.0</p>
     </div>
     <div id="err"></div>
 
