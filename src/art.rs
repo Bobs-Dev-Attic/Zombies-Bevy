@@ -880,6 +880,19 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
     )
 }
 
+/// Right-elbow bend for the knife: held bent for a slash, straightening out
+/// through a stab so the blade lunges forward. Shared by the pose and the hand-
+/// tracking so the gripped knife lines up with the actual hand.
+fn melee_fore_bend_r(stab: bool, arc: f32) -> f32 {
+    // Rest keeps the elbow cocked (~1.5). A stab straightens it hard to lunge the
+    // blade out; a slash straightens it only a little as the whole arm sweeps.
+    if stab {
+        1.5 - arc * 1.6
+    } else {
+        1.5 - arc * 0.6
+    }
+}
+
 pub fn animate_player(
     player_q: Query<(&Player, &Rig, &WeaponVisuals, &PlayerArms)>,
     mut tf_q: Query<&mut Transform>,
@@ -970,6 +983,10 @@ pub fn animate_player(
             };
         }
     }
+    // The knife is worked one-handed, so hide the left arm while it's out.
+    if let Ok(mut v) = vis_q.get_mut(rig.arm_l) {
+        *v = if melee { Visibility::Hidden } else { Visibility::Inherited };
+    }
 
     // Reload progress (0..1) drives a per-gun reload animation whose length
     // automatically matches each weapon's own reload cycle time.
@@ -998,10 +1015,12 @@ pub fn animate_player(
     // Arms are shoulder pivots at the shoulders; the forearm bend (baked in)
     // brings both hands onto the gun. We drive the shoulder position + rotation.
     if melee {
-        // Knife in the RIGHT hand, cocked OUT to the right. The left arm hangs
-        // low with the hand near the waist. Attacks alternate between a wide
-        // SLASH (the knife sweeps across the chest) and a forward STAB (the knife
-        // thrusts straight out along the aim), set by `melee_stab`.
+        // One-armed knife work in the RIGHT hand (the left arm is hidden for
+        // melee — see below). Attacks alternate a wide SLASH (the arm swings the
+        // blade across the chest) and a forward STAB (the elbow straightens to
+        // drive the blade out along the aim). The knife is pinned to the hand:
+        // its position/rotation are derived from the arm + elbow angles so it
+        // stays gripped instead of floating.
         let sw = if p.swing_dur > 0.0 {
             (p.swing_t / p.swing_dur).clamp(0.0, 1.0)
         } else {
@@ -1009,30 +1028,24 @@ pub fn animate_player(
         };
         let arc = (sw * std::f32::consts::PI).sin(); // 0 at rest, 1 at full extension
         let stab = p.melee_stab;
-        // Right/knife arm: held out to the right; a slash swings it across, a
-        // stab keeps it aimed forward while the blade thrusts out (below).
+        // Shoulder mount, arm angle (r1) and elbow bend (r2). A stab aims the arm
+        // forward and straightens the elbow to lunge; a slash sweeps the shoulder
+        // across with the elbow held bent.
+        let sh = Vec2::new(2.0, -7.0);
+        let r1 = if stab { -0.5 + arc * 0.2 } else { -0.5 + arc * 1.9 };
+        let r2 = melee_fore_bend_r(stab, arc);
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(2.0, -7.0, 0.1);
-            let rot = if stab { -0.7 + arc * 0.35 } else { -0.7 + arc * 2.0 };
-            a.rotation = Quat::from_rotation_z(rot);
+            a.translation = Vec3::new(sh.x, sh.y, 0.1);
+            a.rotation = Quat::from_rotation_z(r1);
         }
-        // Left arm: bent out with the hand tucked low by the waist (the upper arm
-        // sits low and the elbow folds hard so the hand drops to centre — see the
-        // forearm-bend section below).
-        if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(-2.0, 4.5, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.4);
-        }
+        // Follow the hand at the end of the two-segment arm (upper arm 12.5 +
+        // forearm 13 + 1 to the fist) and grip the knife there, blade pointing
+        // out along the forearm.
+        let elbow = sh + Vec2::new(r1.cos(), r1.sin()) * 12.5;
+        let hand = elbow + Vec2::new((r1 + r2).cos(), (r1 + r2).sin()) * 14.0;
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            if stab {
-                // Thrust straight forward along the aim, then retract.
-                wt.translation = Vec3::new(15.0 + arc * 18.0, -8.0 + arc * 4.0, 0.15);
-                wt.rotation = Quat::from_rotation_z(0.4 - arc * 0.45);
-            } else {
-                // Sweep the blade across the chest from right to left-front.
-                wt.translation = Vec3::new(15.0 + arc * 2.0, -8.0 + arc * 17.0, 0.15);
-                wt.rotation = Quat::from_rotation_z(0.5 - arc * 2.2);
-            }
+            wt.translation = Vec3::new(hand.x, hand.y, 0.15);
+            wt.rotation = Quat::from_rotation_z(r1 + r2);
         }
     } else if w.kind == WeaponKind::Launcher {
         // Shoulder-mounted bazooka: the tube rests up on the RIGHT shoulder and
@@ -1132,8 +1145,7 @@ pub fn animate_player(
             0.0
         };
         let arc = (sw * std::f32::consts::PI).sin();
-        let r = if p.melee_stab { 0.9 - arc * 0.75 } else { 0.9 };
-        (-1.6, r)
+        (-1.6, melee_fore_bend_r(p.melee_stab, arc))
     } else if w.kind == WeaponKind::Launcher {
         // Left arm folds across to brace the tube; right elbow bent up to the grip.
         (-1.1, 0.5)
