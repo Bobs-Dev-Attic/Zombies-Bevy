@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0a0a0d" />
+    <title>Zombies: Escape the Horde</title>
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #08080b;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        overscroll-behavior: none;
+        touch-action: none;
+      }
+      #game-canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        image-rendering: pixelated;
+        outline: none;
+      }
+      #loader {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: radial-gradient(circle at 50% 40%, #16161d 0%, #08080b 70%);
+        color: #c9c9d4;
+        z-index: 10;
+        transition: opacity 0.6s ease;
+      }
+      #loader h1 {
+        font-size: clamp(40px, 9vw, 88px);
+        letter-spacing: 6px;
+        color: #d62b23;
+        text-shadow: 0 0 24px rgba(214, 43, 35, 0.4);
+      }
+      #loader p {
+        font-size: 15px;
+        color: #6c6c7a;
+      }
+      .bar {
+        width: min(320px, 70vw);
+        height: 6px;
+        background: #1e1e28;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .bar > span {
+        display: block;
+        height: 100%;
+        width: 30%;
+        background: #d62b23;
+        border-radius: 3px;
+        animation: slide 1.1s ease-in-out infinite;
+      }
+      @keyframes slide {
+        0% {
+          transform: translateX(-120%);
+        }
+        100% {
+          transform: translateX(420%);
+        }
+      }
+      #loader.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #err {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+        color: #ff8a80;
+        background: #08080b;
+        z-index: 20;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game-canvas" tabindex="0"></canvas>
+
+    <div id="loader">
+      <h1>ZOMBIES</h1>
+      <p>Escape the Horde — loading…</p>
+      <div class="bar"><span></span></div>
+    </div>
+    <div id="err"></div>
+
+    <script type="module">
+      const loader = document.getElementById("loader");
+      const errBox = document.getElementById("err");
+
+      // Hide the loader once the game paints its first frames.
+      function hideLoader() {
+        loader.classList.add("hidden");
+        setTimeout(() => loader.remove(), 700);
+      }
+
+      try {
+        const init = (await import("./pkg/zombies_bevy.js")).default;
+        await init();
+        // Give Bevy a moment to spin up, then reveal the canvas.
+        setTimeout(hideLoader, 900);
+      } catch (e) {
+        console.error(e);
+        // Bevy throws a benign control-flow exception on startup; ignore it.
+        if (
+          e &&
+          e.message &&
+          e.message.includes("Using exceptions for control flow")
+        ) {
+          setTimeout(hideLoader, 900);
+        } else {
+          errBox.style.display = "flex";
+          errBox.textContent =
+            "Failed to load the game. This build needs WebGL2 and WebAssembly. " +
+            "Try a recent Chrome, Firefox, Safari or Edge. (" +
+            (e && e.message ? e.message : e) +
+            ")";
+        }
+      }
+
+      // Keep the canvas focused so keyboard input works immediately.
+      const canvas = document.getElementById("game-canvas");
+      window.addEventListener("pointerdown", () => canvas.focus());
+      canvas.focus();
+    </script>
+  </body>
+</html>
