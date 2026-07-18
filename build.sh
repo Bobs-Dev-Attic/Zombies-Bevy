@@ -2,8 +2,8 @@
 # Build the Bevy game to WebAssembly and stage it under web/pkg for Vercel.
 set -euo pipefail
 
-# Cargo replaces '-' with '_' in the emitted artifact name.
-CRATE=zombies_bevy
+# The binary target keeps the package name (dash preserved).
+CRATE=zombies-bevy
 OUT=web/pkg
 
 echo "==> cargo build (release, wasm32)"
