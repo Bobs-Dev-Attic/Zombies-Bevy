@@ -7,13 +7,13 @@ use bevy::prelude::*;
 use rand::Rng;
 use std::f32::consts::TAU;
 
-/// A fly that buzzes around a home point and scatters when the player nears.
+/// A fly that hovers around a home point (a corpse), darting between nearby spots.
 #[derive(Component)]
 pub struct Fly {
     pub home: Vec2,
     pub vel: Vec2,
-    pub phase: f32,
-    pub flee: f32, // scatter timer
+    pub target: Vec2, // current spot it's drifting toward
+    pub t: f32,       // countdown to the next dart
 }
 
 /// A corpse that twitches — periodic little jerks of the body.
@@ -128,19 +128,37 @@ pub fn scatter_ambient(commands: &mut Commands, art: &Art, world: &World, center
         }
     }
 
-    // ---- Flickering street lights ----
-    for _ in 0..7 {
+    // ---- Flickering street-lamp pools ----
+    // A pool of light on the ground with a brighter core (the bulb reflection),
+    // both flickering together so it reads as a failing overhead light.
+    for _ in 0..6 {
         let Some(p) = floor_pt(world, center, &mut rng, 120.0) else { continue };
-        let base = rng.gen_range(0.10..0.20);
+        let phase = rng.gen_range(0.0..TAU);
+        let rate = rng.gen_range(5.0..11.0);
+        let base = rng.gen_range(0.07..0.12);
+        let size = rng.gen_range(150.0..220.0);
+        // Soft outer glow pool.
         commands.spawn((
             Sprite {
                 image: art.soft.clone(),
-                color: Color::srgba(1.0, 0.86, 0.55, base),
-                custom_size: Some(Vec2::splat(rng.gen_range(150.0..240.0))),
+                color: Color::srgba(1.0, 0.9, 0.66, base),
+                custom_size: Some(Vec2::splat(size)),
                 ..default()
             },
             Transform::from_xyz(p.x, p.y, Z_DECAL + 3.0),
-            Flicker { base, phase: rng.gen_range(0.0..TAU), rate: rng.gen_range(6.0..16.0) },
+            Flicker { base, phase, rate },
+            Cleanup,
+        ));
+        // Bright, tight core — the lit spot right under the bulb.
+        commands.spawn((
+            Sprite {
+                image: art.soft.clone(),
+                color: Color::srgba(1.0, 0.94, 0.72, base * 2.4),
+                custom_size: Some(Vec2::splat(size * 0.34)),
+                ..default()
+            },
+            Transform::from_xyz(p.x, p.y, Z_DECAL + 3.2),
+            Flicker { base: base * 2.4, phase, rate },
             Cleanup,
         ));
     }
@@ -241,48 +259,57 @@ fn spawn_corpse(commands: &mut Commands, art: &Art, at: Vec2, gutsy: bool, twitc
 }
 
 fn spawn_fly(commands: &mut Commands, home: Vec2, rng: &mut impl Rng) {
-    let p = home + Vec2::new(rng.gen_range(-14.0..14.0), rng.gen_range(-14.0..14.0));
+    let p = home + Vec2::new(rng.gen_range(-12.0..12.0), rng.gen_range(-12.0..12.0));
     commands.spawn((
         Sprite::from_color(Color::srgb(0.05, 0.05, 0.06), Vec2::splat(2.2)),
         Transform::from_xyz(p.x, p.y, Z_PARTICLE + 2.0),
-        Fly { home, vel: Vec2::ZERO, phase: rng.gen_range(0.0..TAU), flee: 0.0 },
+        Fly { home, vel: Vec2::ZERO, target: p, t: rng.gen_range(0.0..0.5) },
         Cleanup,
     ));
 }
 
-/// Flies buzz erratically around their home and scatter from the player.
+/// Flies hover and congregate around their corpse: they mostly hold near a spot,
+/// then dart to a new nearby spot now and then — a jittery hover, not a swarm.
+/// They give the player a small berth without zooming off.
 pub fn fly_system(
     time: Res<Time>,
     player_q: Query<&Transform, (With<Player>, Without<Fly>)>,
     mut q: Query<(&mut Fly, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
-    let t = time.elapsed_secs();
     let ppos = player_q.single().ok().map(|tf| tf.translation.truncate());
     let mut rng = rand::thread_rng();
     for (mut fly, mut tf) in q.iter_mut() {
         let pos = tf.translation.truncate();
-        fly.flee = (fly.flee - dt).max(0.0);
-        // Scatter when the player gets close.
+        let home = fly.home;
+        // Occasionally dart to a fresh spot near the corpse (a quick impulse).
+        fly.t -= dt;
+        if fly.t <= 0.0 {
+            fly.t = rng.gen_range(0.25..0.9);
+            let a = rng.gen_range(0.0..TAU);
+            let r = rng.gen_range(3.0..15.0);
+            let target = home + Vec2::new(a.cos(), a.sin()) * r;
+            fly.target = target;
+            let to = target - pos;
+            let d = to.length().max(0.01);
+            fly.vel += to / d * rng.gen_range(45.0..120.0);
+        }
+        // Ease toward the current spot, with a tiny constant hover jitter.
+        let target = fly.target;
+        fly.vel += (target - pos) * 2.2 * dt;
+        fly.vel += Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 26.0 * dt;
+        // Keep a little distance from the player, gently (drift, don't flee).
         if let Some(pp) = ppos {
             let to = pos - pp;
             let d = to.length();
-            if d < 95.0 {
-                fly.flee = 0.6;
-                let away = if d > 0.01 { to / d } else { Vec2::new(1.0, 0.0) };
-                fly.vel += away * 900.0 * dt;
+            if d < 60.0 && d > 0.01 {
+                fly.vel += to / d * (60.0 - d) * 2.2 * dt;
+                fly.target = home;
             }
         }
-        // Buzz: jittery orbit around home unless fleeing.
-        if fly.flee <= 0.0 {
-            let target = fly.home
-                + Vec2::new((t * 3.1 + fly.phase).sin(), (t * 2.7 + fly.phase * 1.7).cos()) * 12.0;
-            let to = target - pos;
-            fly.vel += to * 6.0 * dt;
-            fly.vel += Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 140.0 * dt;
-        }
-        fly.vel *= 0.90_f32.powf(dt * 60.0);
-        fly.vel = fly.vel.clamp_length_max(340.0);
+        // Heavy drag makes them settle into a hover between darts.
+        fly.vel *= 0.86_f32.powf(dt * 60.0);
+        fly.vel = fly.vel.clamp_length_max(170.0);
         tf.translation.x += fly.vel.x * dt;
         tf.translation.y += fly.vel.y * dt;
     }
@@ -312,8 +339,10 @@ pub fn flicker_system(time: Res<Time>, mut q: Query<(&Flicker, &mut Sprite)>) {
     for (fl, mut sprite) in q.iter_mut() {
         // A couple of sine terms plus noise → an uneven, buzzing flicker.
         let s = (t * fl.rate + fl.phase).sin() * 0.5 + (t * fl.rate * 2.7 + fl.phase).sin() * 0.25;
-        let noise = rng.gen_range(-0.12..0.12);
-        let a = (fl.base * (1.0 + s * 0.6 + noise)).clamp(0.02, 0.35);
-        sprite.color = Color::srgba(1.0, 0.86, 0.55, a);
+        let noise = rng.gen_range(-0.1..0.1);
+        let a = (fl.base * (1.0 + s * 0.55 + noise)).clamp(0.02, fl.base * 1.9);
+        // Keep the current warm tint (core is brighter via its larger base).
+        let c = sprite.color.to_srgba();
+        sprite.color = Color::srgba(c.red, c.green, c.blue, a);
     }
 }

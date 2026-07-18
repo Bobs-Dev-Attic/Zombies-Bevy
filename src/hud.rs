@@ -6,7 +6,6 @@ use crate::weapons::{Ammo, WeaponKind};
 use crate::world::{generate_world, spawn_world_sprites, World};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
-use rand::Rng;
 
 #[derive(Component)]
 pub struct Cleanup;
@@ -524,8 +523,9 @@ fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
         Cleanup,
     ));
 
-    // Concussion haze: a washed-out full-screen veil (blocky, jittering) that
-    // slams on when a blast goes off in your face, then fades as you come round.
+    // Concussion haze: a soft, cloudy full-screen veil that clouds in when a blast
+    // goes off in your face, then clears as you come round. Uses the soft radial
+    // gradient (not a hard disc) so it reads as a hazy blur, not pixels.
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -536,8 +536,8 @@ fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
             ..default()
         },
         ImageNode {
-            image: art.circle.clone(),
-            color: Color::srgba(0.85, 0.88, 0.95, 0.0),
+            image: art.soft.clone(),
+            color: Color::srgba(0.82, 0.84, 0.9, 0.0),
             ..default()
         },
         GlobalZIndex(40),
@@ -904,11 +904,12 @@ pub fn update_concussion(
         shake.add(conc.intensity * dt * 6.0);
     }
     if let Ok(mut img) = veil_q.single_mut() {
-        // Rapid noisy flicker so the haze reads as disoriented visual static.
-        let mut rng = rand::thread_rng();
-        let flicker = 0.6 + rng.gen_range(-0.25..0.25);
-        let a = (conc.intensity * 0.7 * flicker).clamp(0.0, 0.85);
-        img.color = Color::srgba(0.85, 0.88, 0.95, a);
+        // A slow, cloudy swell (not a hard flicker) so it feels like a woozy blur
+        // closing in rather than visual static.
+        let t = time.elapsed_secs();
+        let swell = 0.82 + 0.18 * (t * 2.3).sin() + 0.06 * (t * 5.7).sin();
+        let a = (conc.intensity * 0.9 * swell).clamp(0.0, 0.92);
+        img.color = Color::srgba(0.82, 0.84, 0.9, a);
     }
 }
 

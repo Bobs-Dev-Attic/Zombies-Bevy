@@ -4,6 +4,24 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.15.1]
+
+### Changed
+- **Flies fly more naturally** — they now hover and **congregate around corpses**,
+  holding near a spot and darting to a new nearby one now and then (a jittery
+  hover, not a frantic swarm), and only give the player a small berth instead of
+  zooming away.
+- **Street-lamp pools read as lights** — the vague yellow gradients are toned
+  down into a soft warm pool with a **bright bulb core**, so they look like a
+  failing overhead light rather than a floating glow.
+- **Blast knockout is a cloudy blur** — the concussion overlay is now a soft
+  gradient haze that swells in and clears smoothly, instead of a hard pixelated
+  flicker.
+
+### Fixed
+- **Ricocheting bullets point the right way** — a bounced round's tracer is now
+  re-oriented along its new heading instead of keeping its original angle.
+
 ## [0.15.0]
 
 ### Added

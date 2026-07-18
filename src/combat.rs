@@ -507,6 +507,8 @@ pub fn projectile_system(
                 proj.damage *= proj.falloff;
                 tf.translation.x = prev.x;
                 tf.translation.y = prev.y;
+                // Re-point the tracer along its new heading (it was set at spawn).
+                tf.rotation = Quat::from_rotation_z(proj.vel.y.atan2(proj.vel.x));
                 // A few sparks off the wall.
                 spark_burst(&mut commands, next, proj.vel.y.atan2(proj.vel.x));
             } else if proj.wall_pierce > 0 {
