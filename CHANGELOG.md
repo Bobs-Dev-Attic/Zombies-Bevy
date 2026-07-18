@@ -4,6 +4,17 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.3.0]
+
+### Added
+- **More detailed player** at higher pixel density, matching the reference art:
+  a bulky segmented **backpack** with lid, seams, buckles and shoulder straps;
+  a bigger padded **hat** on the crown; fuller **arms** with sleeve cuffs,
+  ladder stitching and dark gloved hands; and torso highlight + collar shading.
+
+### Changed
+- Player jacket shifted to a sage field-green; wider ground shadow for the pack.
+
 ## [0.2.0]
 
 ### Added
