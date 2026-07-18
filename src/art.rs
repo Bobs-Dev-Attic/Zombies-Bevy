@@ -313,10 +313,6 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     commands.entity(shoulder_l).insert(Transform::from_xyz(1.0, 9.0, 0.03));
     let shoulder_r = commands.spawn(rrect(art, shirt, 8.0, 9.0, 0.03)).id();
     commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -9.0, 0.03));
-    // Crew-neck collar (rounded).
-    let collar = commands.spawn(ellipse(art, skin, 6.0, 8.0, 0.04)).id();
-    commands.entity(collar).insert(Transform::from_xyz(7.5, 0.0, 0.04));
-
     // Body-armour plate carrier (toggled on when equipped).
     let armor_root = commands.spawn((Transform::default(), Visibility::Hidden)).id();
     let vest = commands.spawn(rect(Color::srgb(0.15, 0.16, 0.14), 19.0, 17.0, 0.05)).id();
@@ -336,19 +332,20 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
 
     commands
         .entity(torso)
-        .add_children(&[back_block, chest, shoulder_l, shoulder_r, collar, armor_root]);
+        .add_children(&[back_block, chest, shoulder_l, shoulder_r, armor_root]);
 
     // ---- Arms: big, long, fully bare (skin) two-segment limbs hinged at a
     // rounded elbow, ending in a fist. `bend` angles the forearm inward so both
     // hands meet the gun. Rounded rects so the arms read as muscle, not planks. ----
     let build_arm = |commands: &mut Commands, bend: f32| -> Entity {
         let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
-        let l1 = 10.5; // upper arm (longer)
+        let l1 = 12.5; // upper arm (longer)
         let l2 = 13.0; // forearm (longer)
-        let w = 6.6; // thicker
+        let w = 6.6; // forearm thickness
+        let wu = 8.8; // upper-arm (sleeve) thickness — bigger than the forearm
 
-        // Upper arm is a short shirt sleeve; the forearm below is bare skin.
-        let upper = commands.spawn(rrect(art, shirt, l1, w, 0.1)).id();
+        // Upper arm is a beefy shirt sleeve; the forearm below is bare skin.
+        let upper = commands.spawn(rrect(art, shirt, l1, wu, 0.1)).id();
         commands.entity(upper).insert(Transform::from_xyz(l1 * 0.5, 0.0, 0.1));
         // Elbow joint — a circle (bare skin, where the sleeve ends).
         let elbow = commands.spawn(ellipse(art, skin, w * 1.05, w * 1.05, 0.12)).id();
@@ -446,7 +443,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let flash = commands
         .spawn((
             Sprite::from_color(Color::srgba(1.0, 0.9, 0.5, 0.0), Vec2::splat(6.0)),
-            Transform::from_xyz(31.0, 0.0, 0.3),
+            Transform::from_xyz(39.0, 0.0, 0.3),
         ))
         .id();
 
@@ -679,7 +676,7 @@ pub fn animate_player(
             a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            wt.translation = Vec3::new(22.0 - back, 0.0, 0.15);
+            wt.translation = Vec3::new(30.0 - back, 0.0, 0.15);
             wt.rotation = Quat::IDENTITY;
         }
     }

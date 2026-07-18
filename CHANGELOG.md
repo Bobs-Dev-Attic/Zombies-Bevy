@@ -4,6 +4,16 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.8.3]
+
+### Changed
+- **Pistol held further out** — the gun sits well clear of the body now (barrel,
+  muzzle and flash pushed further forward).
+- **Bigger upper arms** — the shirt-sleeve upper arm is longer and noticeably
+  thicker than the forearm, and reaches out to the further-held gun.
+- **Removed the neck** — dropped the skin-coloured collar piece so the head sits
+  straight on the torso.
+
 ## [0.8.2]
 
 ### Changed
