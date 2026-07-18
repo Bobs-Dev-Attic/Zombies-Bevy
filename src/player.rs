@@ -12,10 +12,10 @@ pub enum HeadGear {
     Helmet,
 }
 
-/// Body slot: the plain field jacket, or a plate carrier / body armour.
+/// Body slot: a plain t-shirt (starting clothes), or a plate carrier / armour.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BodyGear {
-    Jacket,
+    Shirt,
     Armor,
 }
 
@@ -49,7 +49,8 @@ pub struct Player {
     pub helmet_max: f32,
     pub armor_dura: f32,
     pub armor_max: f32,
-    pub armor_flash: f32, // brief flash when armour soaks a hit
+    pub armor_flash: f32,  // brief flash when armour soaks a hit
+    pub hurt_amount: f32,  // health damage taken this frame (drives the red vignette)
 
     // animation / feedback
     pub walk_frame: f32,
@@ -89,14 +90,15 @@ impl Default for Player {
             reloading: 0.0,
             reload_total: 0.0,
             exhausted: false,
-            head_gear: HeadGear::Cap,
-            body_gear: BodyGear::Jacket,
-            has_backpack: true,
+            head_gear: HeadGear::Bare,
+            body_gear: BodyGear::Shirt,
+            has_backpack: false,
             helmet_dura: 0.0,
             helmet_max: 0.0,
             armor_dura: 0.0,
             armor_max: 0.0,
             armor_flash: 0.0,
+            hurt_amount: 0.0,
             walk_frame: 0.0,
             idle_t: 0.0,
             moving: false,
@@ -178,10 +180,11 @@ impl Player {
             self.armor_flash = 0.18;
             if self.armor_dura <= 0.001 {
                 self.armor_dura = 0.0;
-                self.body_gear = BodyGear::Jacket; // armour destroyed
+                self.body_gear = BodyGear::Shirt; // armour destroyed
             }
         }
         self.health = (self.health - dmg).clamp(0.0, self.max_health);
+        self.hurt_amount += dmg; // consumed by the hurt-vignette system
         self.hurt_flash = 0.18;
         self.invuln = 0.3;
     }
@@ -336,15 +339,16 @@ pub fn player_update(
         p.walk_frame += dt * if sprinting { 16.0 } else { 10.0 };
     }
 
-    // Aim toward cursor / aim point.
+    // Aim toward cursor / aim point, with a slight rotational lag so the turn
+    // eases into the new heading instead of snapping.
     if input.have_aim {
         let d = input.aim_world - resolved;
         if d.length_squared() > 1.0 {
             let target = d.y.atan2(d.x);
-            p.angle = angle_lerp(p.angle, target, (dt * 16.0).clamp(0.0, 1.0));
+            p.angle = angle_lerp(p.angle, target, (dt * 9.0).clamp(0.0, 1.0));
         }
     } else if want_move {
-        p.angle = angle_lerp(p.angle, input.move_dir.y.atan2(input.move_dir.x), (dt * 10.0).clamp(0.0, 1.0));
+        p.angle = angle_lerp(p.angle, input.move_dir.y.atan2(input.move_dir.x), (dt * 7.0).clamp(0.0, 1.0));
     }
 
     // Passive regen.
@@ -371,5 +375,38 @@ pub fn player_update(
         && p.ammo_for(w.ammo) > 0
     {
         p.start_reload();
+    }
+}
+
+/// On touch, aim assist: face the nearest zombie (with the same turn lag) so
+/// the attack button just needs to be tapped. Runs after player_update.
+pub fn touch_autoaim(
+    time: Res<Time>,
+    input: Res<InputState>,
+    mut player_q: Query<(&mut Player, &Transform), Without<crate::enemy::Zombie>>,
+    zombies: Query<&Transform, With<crate::enemy::Zombie>>,
+) {
+    if !input.touch_mode {
+        return;
+    }
+    let dt = time.delta_secs();
+    let Ok((mut p, ptf)) = player_q.single_mut() else {
+        return;
+    };
+    let pos = ptf.translation.truncate();
+    let mut best: Option<(f32, Vec2)> = None;
+    for ztf in zombies.iter() {
+        let zp = ztf.translation.truncate();
+        let d2 = (zp - pos).length_squared();
+        if best.map_or(true, |(bd, _)| d2 < bd) {
+            best = Some((d2, zp));
+        }
+    }
+    if let Some((d2, zp)) = best {
+        if d2 < 620.0 * 620.0 {
+            let dv = zp - pos;
+            let target = dv.y.atan2(dv.x);
+            p.angle = angle_lerp(p.angle, target, (dt * 8.0).clamp(0.0, 1.0));
+        }
     }
 }

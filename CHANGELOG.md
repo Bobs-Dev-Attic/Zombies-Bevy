@@ -4,6 +4,26 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.6.0]
+
+### Added
+- **Scene-lighting muzzle flash** — firing throws a soft burst of warm light that
+  briefly illuminates the surrounding area (bigger for explosives).
+- **Damage vignette** — taking a hit flashes a red gradient around the screen
+  edges, its intensity scaled by the damage dealt to your health.
+- **On-screen mobile controls** — a circular movement joystick (bottom-left) and
+  a FIRE button (bottom-right) appear once touch is used, with **auto-aim** at the
+  nearest zombie so you just tap to shoot.
+
+### Changed
+- **Start in a t-shirt with no head covering** — bare head (hair), short-sleeve
+  t-shirt with bare forearms, no backpack. Helmet/armour/backpack are gained from
+  pickups.
+- **Softer, gradient ground shadows** for characters and walls (smootherstep
+  radial falloff), for a more realistic look.
+- **Turn lag** — the player eases into a new facing instead of snapping.
+- **Shell casings eject further** with a bit of tumble.
+
 ## [0.5.0]
 
 ### Added

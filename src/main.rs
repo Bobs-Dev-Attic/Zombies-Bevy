@@ -41,6 +41,7 @@ fn main() {
         .init_resource::<enemy::WaveState>()
         .init_resource::<combat::FireLatch>()
         .init_resource::<gear::PickupSpawner>()
+        .init_resource::<hud::HurtFx>()
         .add_event::<enemy::SpitEvent>()
         .add_event::<combat::Explosion>()
         .add_systems(Startup, (camera::setup_camera, art::setup_art))
@@ -77,11 +78,14 @@ fn main() {
                 combat::particle_system,
                 combat::decal_system,
                 combat::zombie_death_system,
+                combat::muzzle_light_system,
                 gear::pickup_collect,
                 gear::pickup_spawn_over_time,
                 gear::pickup_icon_bob,
                 camera::camera_follow,
                 hud::update_hud,
+                hud::update_hurt_fx,
+                hud::update_touch_controls,
                 hud::check_death,
             )
                 .after(input::gather_input)
@@ -91,6 +95,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                player::touch_autoaim,
                 art::animate_player,
                 art::animate_reload_ring,
                 art::animate_zombies,

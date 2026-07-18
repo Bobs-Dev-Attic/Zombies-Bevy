@@ -1,6 +1,6 @@
-use bevy::prelude::*;
-use bevy::input::touch::Touches;
 use crate::camera::MainCamera;
+use bevy::input::touch::Touches;
+use bevy::prelude::*;
 
 /// Distilled per-frame intent, filled from keyboard+mouse or touch.
 #[derive(Resource, Default)]
@@ -15,18 +15,23 @@ pub struct InputState {
     pub next_weapon: bool,
     pub prev_weapon: bool,
     pub weapon_slot: Option<usize>,
+
+    // On-screen touch controls (mobile).
+    pub touch_mode: bool,     // player is using touch → show sticks, auto-aim
+    pub joy_base: Vec2,       // screen-space centre of the movement stick
+    pub knob: Vec2,           // screen-space position of the stick knob
+    pub attack_center: Vec2,  // screen-space centre of the attack button
+    pub attack_down: bool,    // attack button held (for the pressed look)
 }
 
-/// State for the on-screen virtual sticks (mobile).
+/// Layout constants for the on-screen controls (screen pixels).
+pub const JOY_R: f32 = 70.0;
+pub const KNOB_R: f32 = 30.0;
+pub const BTN_R: f32 = 58.0;
+
+/// Retained so the menu/game-over "press to start" can clear stale touch state.
 #[derive(Resource, Default)]
-pub struct TouchSticks {
-    pub move_id: Option<u64>,
-    pub move_origin: Vec2,
-    pub move_cur: Vec2,
-    pub aim_id: Option<u64>,
-    pub aim_origin: Vec2,
-    pub aim_cur: Vec2,
-}
+pub struct TouchSticks;
 
 pub fn gather_input(
     keys: Res<ButtonInput<KeyCode>>,
@@ -34,7 +39,7 @@ pub fn gather_input(
     touches: Res<Touches>,
     windows: Query<&Window>,
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    mut sticks: ResMut<TouchSticks>,
+    mut prev_touch: Local<bool>,
     mut input: ResMut<InputState>,
 ) {
     *input = InputState::default();
@@ -62,9 +67,18 @@ pub fn gather_input(
         };
     }
 
-    // ---- Mouse aim + fire ----
     let window = windows.iter().next();
     let cam = camera_q.iter().next();
+
+    // Compute control anchors from the window each frame.
+    let (w, h) = window.map(|win| (win.width(), win.height())).unwrap_or((1280.0, 720.0));
+    let joy_base = Vec2::new(24.0 + JOY_R, h - 24.0 - JOY_R);
+    let attack_center = Vec2::new(w - 28.0 - BTN_R, h - 28.0 - BTN_R);
+    input.joy_base = joy_base;
+    input.knob = joy_base;
+    input.attack_center = attack_center;
+
+    // ---- Mouse aim + fire (desktop) ----
     if let (Some(window), Some((camera, cam_tf))) = (window, cam) {
         if let Some(cursor) = window.cursor_position() {
             if let Ok(world) = camera.viewport_to_world_2d(cam_tf, cursor) {
@@ -75,56 +89,41 @@ pub fn gather_input(
         if mouse_buttons.pressed(MouseButton::Left) {
             input.fire = true;
         }
+    }
 
-        // ---- Touch sticks ----
-        let w = window.width();
-        // Assign new touches to a stick based on which half they started in.
-        for t in touches.iter_just_pressed() {
-            let p = t.position();
-            if p.x < w * 0.5 && sticks.move_id.is_none() {
-                sticks.move_id = Some(t.id());
-                sticks.move_origin = p;
-                sticks.move_cur = p;
-            } else if sticks.aim_id.is_none() {
-                sticks.aim_id = Some(t.id());
-                sticks.aim_origin = p;
-                sticks.aim_cur = p;
+    // ---- On-screen touch controls ----
+    // A quick tap can begin+end within a frame, so also count just-pressed.
+    let mut any_touch = touches.iter_just_pressed().next().is_some();
+    for t in touches.iter() {
+        let p = t.position(); // screen px, origin top-left, y down
+        any_touch = true;
+        if p.distance(attack_center) < BTN_R + 24.0 {
+            input.fire = true;
+            input.attack_down = true;
+        } else {
+            // Movement joystick (anywhere else on screen drives it).
+            let mut off = p - joy_base;
+            let len = off.length();
+            if len > JOY_R {
+                off = off / len * JOY_R;
+            }
+            input.knob = joy_base + off;
+            if len > 8.0 {
+                let dir = Vec2::new(off.x, -off.y); // flip screen-y to world-up
+                input.move_dir = dir.normalize();
+                input.move_mag = (len / (JOY_R * 0.82)).clamp(0.0, 1.0);
             }
         }
-        for t in touches.iter() {
-            if Some(t.id()) == sticks.move_id {
-                sticks.move_cur = t.position();
-            } else if Some(t.id()) == sticks.aim_id {
-                sticks.aim_cur = t.position();
-            }
-        }
-        for t in touches.iter_just_released() {
-            if Some(t.id()) == sticks.move_id {
-                sticks.move_id = None;
-            }
-            if Some(t.id()) == sticks.aim_id {
-                sticks.aim_id = None;
-            }
-        }
-
-        // Movement from left stick.
-        if sticks.move_id.is_some() {
-            let mut d = sticks.move_cur - sticks.move_origin;
-            d.y = -d.y; // screen y is down
-            let len = d.length();
-            if len > 6.0 {
-                input.move_dir = d / len;
-                input.move_mag = (len / 55.0).clamp(0.0, 1.0);
-            }
-        }
-        // Aim + fire from right stick.
-        if sticks.aim_id.is_some() {
-            if let Ok(world) = camera.viewport_to_world_2d(cam_tf, sticks.aim_cur) {
-                input.aim_world = world;
-                input.have_aim = true;
-                input.fire = true;
-            }
-        }
+    }
+    if any_touch {
+        input.touch_mode = true;
+        *prev_touch = true;
+    }
+    // Once touch has ever been used this session, keep showing the controls.
+    if *prev_touch {
+        input.touch_mode = true;
+        // Mouse aim is meaningless on touch; clear it so auto-aim takes over.
+        input.have_aim = false;
     }
 
     // ---- Discrete keys ----
