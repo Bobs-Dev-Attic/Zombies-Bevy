@@ -6,6 +6,7 @@ use crate::weapons::{Ammo, WeaponKind};
 use crate::world::{generate_world, spawn_world_sprites, World};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
+use rand::Rng;
 
 #[derive(Component)]
 pub struct Cleanup;
@@ -16,6 +17,14 @@ pub struct HurtVignette;
 pub struct HurtFx {
     pub intensity: f32,
 }
+/// Concussion from a close blast: drives a disorienting full-screen haze +
+/// screen shake while it decays. Set by the explosion system.
+#[derive(Resource, Default)]
+pub struct Concussion {
+    pub intensity: f32,
+}
+#[derive(Component)]
+pub struct ConcussionVeil;
 #[derive(Component)]
 pub struct MenuUi;
 #[derive(Component)]
@@ -515,6 +524,27 @@ fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
         Cleanup,
     ));
 
+    // Concussion haze: a washed-out full-screen veil (blocky, jittering) that
+    // slams on when a blast goes off in your face, then fades as you come round.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        ImageNode {
+            image: art.circle.clone(),
+            color: Color::srgba(0.85, 0.88, 0.95, 0.0),
+            ..default()
+        },
+        GlobalZIndex(40),
+        ConcussionVeil,
+        Cleanup,
+    ));
+
     // Full-screen red damage vignette (transparent until the player is hit).
     commands.spawn((
         Node {
@@ -850,6 +880,35 @@ pub fn update_hurt_fx(
     fx.intensity = (fx.intensity - dt * 1.8).max(0.0);
     if let Ok(mut img) = vig_q.single_mut() {
         img.color = Color::srgba(0.85, 0.05, 0.05, fx.intensity);
+    }
+}
+
+/// Drive the concussion haze: a jittering washed-out veil plus screen shake
+/// while the player is dazed by a close blast, fading as they recover.
+pub fn update_concussion(
+    time: Res<Time>,
+    mut conc: ResMut<Concussion>,
+    mut shake: ResMut<Shake>,
+    player_q: Query<&crate::player::Player>,
+    mut veil_q: Query<&mut ImageNode, With<ConcussionVeil>>,
+) {
+    let dt = time.delta_secs();
+    // While knocked out, keep the haze pinned high; otherwise let it fade.
+    if let Ok(p) = player_q.single() {
+        if p.stun > 0.0 {
+            conc.intensity = conc.intensity.max((p.stun / 1.4).clamp(0.3, 1.0));
+        }
+    }
+    conc.intensity = (conc.intensity - dt * 0.9).max(0.0);
+    if conc.intensity > 0.001 {
+        shake.add(conc.intensity * dt * 6.0);
+    }
+    if let Ok(mut img) = veil_q.single_mut() {
+        // Rapid noisy flicker so the haze reads as disoriented visual static.
+        let mut rng = rand::thread_rng();
+        let flicker = 0.6 + rng.gen_range(-0.25..0.25);
+        let a = (conc.intensity * 0.7 * flicker).clamp(0.0, 0.85);
+        img.color = Color::srgba(0.85, 0.88, 0.95, a);
     }
 }
 

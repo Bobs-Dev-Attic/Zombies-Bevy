@@ -220,6 +220,10 @@ pub fn firing_system(
     let Ok((mut p, tf)) = q.single_mut() else {
         return;
     };
+    // No firing while knocked out by a blast.
+    if p.stun > 0.0 {
+        return;
+    }
     let pos = tf.translation.truncate();
     let w = *p.weapon();
 
@@ -305,6 +309,39 @@ pub fn firing_system(
 
     // Pixelated muzzle flash: a blocky star of squares bursting from the tip.
     spawn_muzzle_flash(&mut commands, muzzle, angle, flash_scale, &mut rng);
+
+    // Bazooka backblast: a plume of exhaust smoke shoots out the rear of the tube.
+    if w.explosive > 0.0 {
+        let fwd = Vec2::new(angle.cos(), angle.sin());
+        let rear = pos - fwd * 14.0;
+        for _ in 0..14 {
+            let a = angle + std::f32::consts::PI + rng.gen_range(-0.5..0.5);
+            let sp = rng.gen_range(120.0..360.0);
+            let g = rng.gen_range(0.35..0.6);
+            spawn_particle(
+                &mut commands,
+                rear + Vec2::new(rng.gen_range(-3.0..3.0), rng.gen_range(-3.0..3.0)),
+                Vec2::new(a.cos(), a.sin()) * sp,
+                Color::srgb(g, g, g),
+                rng.gen_range(5.0..11.0),
+                rng.gen_range(0.35..0.7),
+                0.0,
+            );
+        }
+        // A brief orange flare right at the vent.
+        for _ in 0..5 {
+            let a = angle + std::f32::consts::PI + rng.gen_range(-0.6..0.6);
+            spawn_particle(
+                &mut commands,
+                rear,
+                Vec2::new(a.cos(), a.sin()) * rng.gen_range(200.0..420.0),
+                Color::srgb(1.0, 0.6, 0.2),
+                rng.gen_range(3.0..5.0),
+                rng.gen_range(0.1..0.22),
+                0.0,
+            );
+        }
+    }
 
     for _ in 0..w.pellets {
         // Guard against a zero-spread weapon (e.g. the bazooka): sampling an
@@ -547,8 +584,10 @@ pub fn projectile_system(
 pub fn explosion_system(
     mut ev: EventReader<Explosion>,
     mut shake: ResMut<Shake>,
+    mut conc: ResMut<crate::hud::Concussion>,
     mut commands: Commands,
     mut zombies: Query<(&mut Zombie, &Transform)>,
+    mut player_q: Query<(&mut Player, &Transform), Without<Zombie>>,
 ) {
     for ex in ev.read() {
         shake.add(0.7);
@@ -593,6 +632,27 @@ pub fn explosion_system(
                 let a = d.y.atan2(d.x);
                 z.apply_knockback(a, ex.knockback * falloff);
                 blood_burst(&mut commands, zp, a, 6);
+            }
+        }
+
+        // Shockwave hits the player too: knocked back hard (scaled by closeness),
+        // and a close-enough blast concusses — knocked out for a spell that grows
+        // the nearer they were to the centre, with a disorienting screen effect.
+        if let Ok((mut p, ptf)) = player_q.single_mut() {
+            let pp = ptf.translation.truncate();
+            let to = pp - ex.pos;
+            let d = to.length();
+            let shock = ex.radius * 2.4;
+            if d < shock {
+                let t = (1.0 - d / shock).clamp(0.0, 1.0); // 1 = point blank
+                let a = if d > 0.001 { to.y.atan2(to.x) } else { 0.0 };
+                p.vel += Vec2::new(a.cos(), a.sin()) * (120.0 + 520.0 * t);
+                if t > 0.18 {
+                    let stun = 0.25 + 1.5 * t * t;
+                    p.stun = p.stun.max(stun);
+                    conc.intensity = conc.intensity.max((0.4 + t).min(1.0));
+                    p.hurt(ex.damage * 0.22 * t);
+                }
             }
         }
     }

@@ -4,6 +4,28 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.14.0]
+
+### Added
+- **Scroll-wheel weapon switching** — the mouse wheel now cycles weapons (scroll
+  down for the next, up for the previous).
+- **Bazooka backblast** — firing the launcher now shoots a plume of exhaust
+  smoke (and a flare) out of the rear vent.
+- **Blast shockwave & concussion** — a rocket's explosion now knocks the
+  **player** back too (harder the closer they are), and a close-enough blast
+  **knocks them out**: the screen washes into a disorienting pixelated haze and
+  shakes, and the player can't act for a spell that scales with how close they
+  were to the centre. The blast also throws everything nearby outward relative
+  to distance from the centre.
+
+### Changed
+- **Shoulder-mounted bazooka** — the launcher is now hoisted up onto the right
+  shoulder and aimed down the sights, instead of held at the waist.
+- **Fixed the knife grip** — the knife is now held in the **right hand** like a
+  butcher's cleaver: the right arm is slightly bent with the blade cocked across
+  the chest ready to sweep out and across, while the left arm is bent out with
+  the hand resting near the waist.
+
 ## [0.13.0]
 
 ### Added

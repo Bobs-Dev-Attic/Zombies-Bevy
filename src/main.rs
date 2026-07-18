@@ -43,6 +43,7 @@ fn main() {
         .init_resource::<combat::FireLatch>()
         .init_resource::<gear::PickupSpawner>()
         .init_resource::<hud::HurtFx>()
+        .init_resource::<hud::Concussion>()
         .init_resource::<Settings>()
         .add_event::<enemy::SpitEvent>()
         .add_event::<combat::Explosion>()
@@ -104,7 +105,7 @@ fn main() {
                 gear::pickup_icon_bob,
                 camera::camera_follow,
                 hud::update_hud,
-                hud::update_hurt_fx,
+                (hud::update_hurt_fx, hud::update_concussion),
                 hud::update_touch_controls,
                 hud::check_death,
             )
