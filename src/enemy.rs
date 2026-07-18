@@ -1,0 +1,433 @@
+use crate::common::*;
+use crate::player::Player;
+use crate::world::World;
+use bevy::prelude::*;
+use rand::Rng;
+use std::f32::consts::TAU;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ZKind {
+    Walker,
+    Runner,
+    Crawler,
+    Brute,
+    Spitter,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Pattern {
+    Direct,
+    WanderChase,
+    Ranged,
+}
+
+pub struct ZDef {
+    pub hp: f32,
+    pub speed: f32,
+    pub r: f32,
+    pub dmg: f32,
+    pub score: u32,
+    pub pattern: Pattern,
+    pub knock_resist: f32,
+    pub gore: f32,
+    pub shamble: f32,
+    pub lurch: f32,
+}
+
+pub fn zdef(k: ZKind) -> ZDef {
+    match k {
+        ZKind::Walker => ZDef { hp: 46.0, speed: 52.0, r: 12.0, dmg: 9.0, score: 10, pattern: Pattern::Direct, knock_resist: 0.0, gore: 1.0, shamble: 0.5, lurch: 0.38 },
+        ZKind::Runner => ZDef { hp: 30.0, speed: 96.0, r: 11.0, dmg: 7.0, score: 16, pattern: Pattern::Direct, knock_resist: 0.1, gore: 1.0, shamble: 0.2, lurch: 0.15 },
+        ZKind::Crawler => ZDef { hp: 22.0, speed: 74.0, r: 9.0, dmg: 6.0, score: 14, pattern: Pattern::WanderChase, knock_resist: 0.1, gore: 0.7, shamble: 0.42, lurch: 0.32 },
+        ZKind::Brute => ZDef { hp: 180.0, speed: 40.0, r: 21.0, dmg: 22.0, score: 40, pattern: Pattern::Direct, knock_resist: 0.75, gore: 2.0, shamble: 0.26, lurch: 0.42 },
+        ZKind::Spitter => ZDef { hp: 40.0, speed: 52.0, r: 12.0, dmg: 5.0, score: 24, pattern: Pattern::Ranged, knock_resist: 0.2, gore: 1.0, shamble: 0.2, lurch: 0.18 },
+    }
+}
+
+/// Per-zombie cosmetic variety.
+#[derive(Clone, Copy)]
+pub struct Look {
+    pub skin: Color,
+    pub shirt: Color,
+    pub pants: Color,
+    pub hair: i8, // -1 bald, 0 short, 1 long
+    pub hair_col: Color,
+}
+
+fn jitter(rng: &mut impl Rng, c: [f32; 3], amt: f32) -> Color {
+    Color::srgb(
+        (c[0] + rng.gen_range(-amt..amt)).clamp(0.0, 1.0),
+        (c[1] + rng.gen_range(-amt..amt)).clamp(0.0, 1.0),
+        (c[2] + rng.gen_range(-amt..amt)).clamp(0.0, 1.0),
+    )
+}
+
+pub fn make_look(kind: ZKind, rng: &mut impl Rng) -> Look {
+    let skin_base = *[[0.42, 0.50, 0.36], [0.55, 0.58, 0.44], [0.36, 0.45, 0.40]]
+        .get(rng.gen_range(0..3))
+        .unwrap();
+    let shirts = [
+        [0.55, 0.16, 0.16],
+        [0.16, 0.28, 0.5],
+        [0.5, 0.45, 0.2],
+        [0.3, 0.3, 0.34],
+        [0.2, 0.4, 0.28],
+        [0.45, 0.25, 0.4],
+    ];
+    let shirt = shirts[rng.gen_range(0..shirts.len())];
+    let hair_styles = [-1i8, 0, 0, 1];
+    let hcol = [[0.1, 0.08, 0.06], [0.35, 0.22, 0.1], [0.6, 0.55, 0.5]];
+    let _ = kind;
+    let hair = hair_styles[rng.gen_range(0..hair_styles.len())];
+    let hair_pick = hcol[rng.gen_range(0..hcol.len())];
+    Look {
+        skin: jitter(rng, skin_base, 0.05),
+        shirt: jitter(rng, shirt, 0.05),
+        pants: jitter(rng, [0.18, 0.18, 0.2], 0.04),
+        hair,
+        hair_col: jitter(rng, hair_pick, 0.03),
+    }
+}
+
+#[derive(Component)]
+pub struct Zombie {
+    pub kind: ZKind,
+    pub hp: f32,
+    pub max_hp: f32,
+    pub r: f32,
+    pub speed: f32,
+    pub dmg: f32,
+    pub score: u32,
+    pub pattern: Pattern,
+    pub knock_resist: f32,
+    pub gore: f32,
+
+    pub vel: Vec2,
+    pub angle: f32,
+    pub frame: f32,
+    pub state_chase: bool,
+    pub wander_angle: f32,
+    pub wander_timer: f32,
+    pub attack_cd: f32,
+    pub spit_cd: f32,
+    pub hurt_flash: f32,
+    pub knock: Vec2,
+    pub flank: f32,
+
+    pub shamble_amp: f32,
+    pub shamble_freq: f32,
+    pub shamble_phase: f32,
+    pub curve_bias: f32,
+    pub lurch_depth: f32,
+    pub lurch_rate: f32,
+    pub lurch_phase: f32,
+    pub gait_t: f32,
+    pub stride_rate: f32,
+
+    pub look: Look,
+    pub dead: bool,
+}
+
+impl Zombie {
+    pub fn new(kind: ZKind, hp_scale: f32, rng: &mut impl Rng) -> Self {
+        let d = zdef(kind);
+        Self {
+            kind,
+            hp: d.hp * hp_scale,
+            max_hp: d.hp * hp_scale,
+            r: d.r,
+            speed: d.speed * rng.gen_range(0.9..1.12),
+            dmg: d.dmg,
+            score: d.score,
+            pattern: d.pattern,
+            knock_resist: d.knock_resist,
+            gore: d.gore,
+            vel: Vec2::ZERO,
+            angle: rng.gen_range(0.0..TAU),
+            frame: rng.gen_range(0.0..TAU),
+            state_chase: false,
+            wander_angle: rng.gen_range(0.0..TAU),
+            wander_timer: rng.gen_range(0.5..2.0),
+            attack_cd: 0.0,
+            spit_cd: rng.gen_range(1.0..3.0),
+            hurt_flash: 0.0,
+            knock: Vec2::ZERO,
+            flank: if rng.gen_bool(0.5) { 1.0 } else { -1.0 },
+            shamble_amp: d.shamble * rng.gen_range(0.7..1.3),
+            shamble_freq: rng.gen_range(1.3..3.1),
+            shamble_phase: rng.gen_range(0.0..TAU),
+            curve_bias: rng.gen_range(-0.13..0.13) * (d.shamble / 0.4),
+            lurch_depth: d.lurch * rng.gen_range(0.7..1.2),
+            lurch_rate: rng.gen_range(0.7..1.7),
+            lurch_phase: rng.gen_range(0.0..TAU),
+            gait_t: rng.gen_range(0.0..6.0),
+            stride_rate: rng.gen_range(0.8..1.35),
+            look: make_look(kind, rng),
+            dead: false,
+        }
+    }
+
+    pub fn apply_knockback(&mut self, angle: f32, force: f32) {
+        let f = force * (1.0 - self.knock_resist);
+        self.knock.x += angle.cos() * f;
+        self.knock.y += angle.sin() * f;
+    }
+}
+
+/// Wave director.
+#[derive(Resource)]
+pub struct WaveState {
+    pub wave: u32,
+    pub to_spawn: u32,
+    pub spawn_timer: f32,
+    pub intermission: f32,
+    pub active: bool,
+}
+impl Default for WaveState {
+    fn default() -> Self {
+        Self {
+            wave: 0,
+            to_spawn: 0,
+            spawn_timer: 0.0,
+            intermission: 2.0,
+            active: false,
+        }
+    }
+}
+
+/// Event asking combat to spawn a hostile spit projectile.
+#[derive(Event)]
+pub struct SpitEvent {
+    pub pos: Vec2,
+    pub angle: f32,
+}
+
+fn floor_ring_point(world: &World, center: Vec2, rng: &mut impl Rng) -> Option<Vec2> {
+    for _ in 0..24 {
+        let a = rng.gen_range(0.0..TAU);
+        let d = rng.gen_range(560.0..820.0);
+        let p = center + Vec2::new(a.cos(), a.sin()) * d;
+        if !world.blocks_point(p) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+pub fn wave_system(
+    time: Res<Time>,
+    world: Res<World>,
+    mut waves: ResMut<WaveState>,
+    mut score: ResMut<Score>,
+    player_q: Query<&Transform, With<Player>>,
+    zombies: Query<(), With<Zombie>>,
+    mut commands: Commands,
+) {
+    let dt = time.delta_secs();
+    let Ok(ptf) = player_q.single() else {
+        return;
+    };
+    let center = ptf.translation.truncate();
+    let alive = zombies.iter().count() as u32;
+    let mut rng = rand::thread_rng();
+
+    if !waves.active {
+        waves.intermission -= dt;
+        if waves.intermission <= 0.0 {
+            waves.wave += 1;
+            score.wave = waves.wave;
+            waves.to_spawn = 6 + waves.wave * 3;
+            waves.active = true;
+            waves.spawn_timer = 0.0;
+        }
+        return;
+    }
+
+    if waves.to_spawn > 0 {
+        waves.spawn_timer -= dt;
+        if waves.spawn_timer <= 0.0 && alive < 42 {
+            waves.spawn_timer = (0.7 - waves.wave as f32 * 0.03).max(0.18);
+            if let Some(p) = floor_ring_point(&world, center, &mut rng) {
+                let kind = pick_kind(waves.wave, &mut rng);
+                let hp_scale = 1.0 + waves.wave as f32 * 0.06;
+                let z = Zombie::new(kind, hp_scale, &mut rng);
+                let r = z.r;
+                commands.spawn((
+                    z,
+                    Transform::from_xyz(p.x, p.y, depth_z(Z_CHAR, p.y)),
+                    Visibility::default(),
+                    crate::art::NeedsRig,
+                    NewZombieRadius(r),
+                ));
+                waves.to_spawn -= 1;
+            }
+        }
+    } else if alive == 0 {
+        // Wave cleared.
+        waves.active = false;
+        waves.intermission = 4.0;
+    }
+}
+
+/// Temporary marker carrying radius so the rig builder knows the size.
+#[derive(Component)]
+pub struct NewZombieRadius(pub f32);
+
+fn pick_kind(wave: u32, rng: &mut impl Rng) -> ZKind {
+    let roll = rng.gen_range(0.0..1.0);
+    match wave {
+        1 => {
+            if roll < 0.85 {
+                ZKind::Walker
+            } else {
+                ZKind::Crawler
+            }
+        }
+        2..=3 => {
+            if roll < 0.55 {
+                ZKind::Walker
+            } else if roll < 0.78 {
+                ZKind::Crawler
+            } else if roll < 0.94 {
+                ZKind::Runner
+            } else {
+                ZKind::Spitter
+            }
+        }
+        _ => {
+            if roll < 0.4 {
+                ZKind::Walker
+            } else if roll < 0.58 {
+                ZKind::Runner
+            } else if roll < 0.72 {
+                ZKind::Crawler
+            } else if roll < 0.86 {
+                ZKind::Spitter
+            } else {
+                ZKind::Brute
+            }
+        }
+    }
+}
+
+pub fn zombie_ai(
+    time: Res<Time>,
+    world: Res<World>,
+    mut spit_ev: EventWriter<SpitEvent>,
+    mut set: ParamSet<(
+        Query<(&mut Player, &Transform)>,
+        Query<(&mut Zombie, &mut Transform)>,
+    )>,
+) {
+    let dt = time.delta_secs();
+    let (ppos, mut player_hurt, mut player_push) = {
+        let pq = set.p0();
+        let Ok((_p, ptf)) = pq.single() else {
+            return;
+        };
+        (ptf.translation.truncate(), 0.0f32, Vec2::ZERO)
+    };
+
+    let mut q = set.p1();
+    for (mut z, mut tf) in q.iter_mut() {
+        z.hurt_flash = (z.hurt_flash - dt).max(0.0);
+        z.attack_cd = (z.attack_cd - dt).max(0.0);
+        z.gait_t += dt;
+        z.frame += dt * (2.0 + z.speed * 0.05) * z.stride_rate;
+
+        let pos = tf.translation.truncate();
+        let to = ppos - pos;
+        let d = to.length().max(0.001);
+        let heading = to / d;
+        let hp_frac = (z.hp / z.max_hp).clamp(0.0, 1.0);
+        let wound_mul = 0.55 + 0.45 * hp_frac;
+        let spd = z.speed * wound_mul;
+
+        let mut tvel = Vec2::ZERO;
+        match z.pattern {
+            Pattern::WanderChase => {
+                if d < 340.0 {
+                    z.state_chase = true;
+                }
+                if !z.state_chase {
+                    z.wander_timer -= dt;
+                    if z.wander_timer <= 0.0 {
+                        z.wander_angle = rand::thread_rng().gen_range(0.0..TAU);
+                        z.wander_timer = rand::thread_rng().gen_range(0.6..2.2);
+                    }
+                    tvel = Vec2::new(z.wander_angle.cos(), z.wander_angle.sin()) * spd * 0.4;
+                } else {
+                    tvel = shamble(&z, heading, spd);
+                }
+            }
+            Pattern::Ranged => {
+                let a = to.y.atan2(to.x);
+                z.angle = angle_lerp(z.angle, a, (dt * 6.0).clamp(0.0, 1.0));
+                let ideal = 190.0;
+                if d > ideal + 40.0 {
+                    tvel = heading * spd;
+                } else if d < ideal - 40.0 {
+                    tvel = -heading * spd * 0.7;
+                } else {
+                    let perp = Vec2::new(-heading.y, heading.x);
+                    tvel = perp * spd * 0.5 * z.flank;
+                }
+                z.spit_cd -= dt;
+                if z.spit_cd <= 0.0 && d < 340.0 {
+                    z.spit_cd = rand::thread_rng().gen_range(2.2..3.6);
+                    spit_ev.write(SpitEvent { pos, angle: a });
+                }
+            }
+            Pattern::Direct => {
+                tvel = shamble(&z, heading, spd);
+            }
+        }
+
+        if z.pattern != Pattern::Ranged {
+            let moving = tvel.length_squared() > 1.0;
+            if moving {
+                let ma = tvel.y.atan2(tvel.x);
+                z.angle = angle_lerp(z.angle, ma, (dt * 6.0).clamp(0.0, 1.0));
+            }
+        }
+
+        // Knockback decay.
+        tvel += z.knock;
+        let decay = 0.001f32.powf(dt);
+        z.knock *= decay;
+        z.vel = tvel;
+
+        let next = pos + tvel * dt;
+        let resolved = world.collide(next, z.r);
+        tf.translation.x = resolved.x;
+        tf.translation.y = resolved.y;
+        tf.translation.z = depth_z(Z_CHAR, resolved.y);
+
+        // Melee the player.
+        let pd = (ppos - resolved).length();
+        if pd < z.r + 11.0 + 2.0 && z.attack_cd <= 0.0 {
+            player_hurt += z.dmg * (0.55 + 0.45 * hp_frac);
+            z.attack_cd = 0.7;
+            let a = (ppos - resolved).y.atan2((ppos - resolved).x);
+            player_push += Vec2::new(a.cos(), a.sin()) * 60.0;
+        }
+    }
+
+    // Apply accumulated damage to the player.
+    if player_hurt > 0.0 || player_push != Vec2::ZERO {
+        let mut pq = set.p0();
+        if let Ok((mut p, _)) = pq.single_mut() {
+            if player_hurt > 0.0 {
+                p.hurt(player_hurt);
+            }
+            p.vel += player_push;
+        }
+    }
+}
+
+fn shamble(z: &Zombie, heading: Vec2, spd: f32) -> Vec2 {
+    let lurch = 1.0 - z.lurch_depth * (0.5 + 0.5 * (z.gait_t * z.lurch_rate + z.lurch_phase).sin());
+    let sway = (z.gait_t * z.shamble_freq + z.shamble_phase).sin() * z.shamble_amp + z.curve_bias;
+    let perp = Vec2::new(-heading.y, heading.x);
+    (heading + perp * sway) * (spd * lurch)
+}
