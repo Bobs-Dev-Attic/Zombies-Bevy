@@ -148,26 +148,41 @@ pub fn spawn_world_sprites(commands: &mut Commands, world: &World) {
             let center = world.tile_center(c, r);
             match world.cells[r * world.cols + c] {
                 Cell::Floor => {
-                    // Asphalt with subtle per-tile jitter for texture.
-                    let j = rng.gen_range(-8.0..8.0) as f32 / 255.0;
-                    let base = 0.20 + j;
-                    let col = Color::srgb(base, base + 0.01, base + 0.02);
+                    // Asphalt with per-tile jitter, brighter than pitch black so
+                    // the scene reads as a lit street.
+                    let j = rng.gen_range(-0.02..0.02);
+                    let warm = rng.gen_range(-0.008..0.012);
+                    let base = 0.27 + j;
+                    let col = Color::srgb(base + warm, base, base + 0.015);
                     commands.spawn((
                         Sprite::from_color(col, Vec2::splat(TILE)),
                         Transform::from_xyz(center.x, center.y, Z_FLOOR),
                         WorldTile,
                     ));
-                    // Occasional cracks / paint speckle for density.
-                    if rng.gen_bool(0.10) {
+                    // Faint tile seams (a subtle grid) for texture and scale.
+                    let seam = Color::srgb(base - 0.05, base - 0.05, base - 0.045);
+                    commands.spawn((
+                        Sprite::from_color(seam, Vec2::new(TILE, 1.5)),
+                        Transform::from_xyz(center.x, center.y - TILE * 0.5, Z_FLOOR + 0.05),
+                        WorldTile,
+                    ));
+                    commands.spawn((
+                        Sprite::from_color(seam, Vec2::new(1.5, TILE)),
+                        Transform::from_xyz(center.x - TILE * 0.5, center.y, Z_FLOOR + 0.05),
+                        WorldTile,
+                    ));
+                    // Occasional cracks / gravel speckle for density.
+                    if rng.gen_bool(0.16) {
                         let sp = rng.gen_range(2.0..5.0);
+                        let d = rng.gen_range(-0.06..0.06);
                         commands.spawn((
                             Sprite::from_color(
-                                Color::srgb(base + 0.05, base + 0.05, base + 0.05),
+                                Color::srgb(base + d, base + d, base + d + 0.01),
                                 Vec2::splat(sp),
                             ),
                             Transform::from_xyz(
-                                center.x + rng.gen_range(-14.0..14.0),
-                                center.y + rng.gen_range(-14.0..14.0),
+                                center.x + rng.gen_range(-15.0..15.0),
+                                center.y + rng.gen_range(-15.0..15.0),
                                 Z_FLOOR + 0.1,
                             ),
                             WorldTile,
@@ -175,23 +190,42 @@ pub fn spawn_world_sprites(commands: &mut Commands, world: &World) {
                     }
                 }
                 Cell::Wall => {
-                    // Wall body.
-                    let shade = rng.gen_range(-6.0..6.0) as f32 / 255.0;
+                    let shade = rng.gen_range(-0.02..0.02);
+                    let wz = depth_z(Z_PROP, center.y);
+                    // Soft cast shadow on the ground below the wall for grounding.
                     commands.spawn((
                         Sprite::from_color(
-                            Color::srgb(0.13 + shade, 0.14 + shade, 0.17 + shade),
-                            Vec2::splat(TILE),
+                            Color::srgba(0.0, 0.0, 0.0, 0.35),
+                            Vec2::new(TILE, TILE * 0.5),
                         ),
-                        Transform::from_xyz(center.x, center.y, depth_z(Z_PROP, center.y)),
+                        Transform::from_xyz(center.x + 4.0, center.y - TILE * 0.5, Z_DECAL + 5.0),
                         WorldTile,
                     ));
-                    // Top highlight lip for a touch of 3D.
+                    // Wall body (a brick/concrete block).
                     commands.spawn((
                         Sprite::from_color(
-                            Color::srgb(0.24, 0.25, 0.30),
-                            Vec2::new(TILE, 6.0),
+                            Color::srgb(0.17 + shade, 0.18 + shade, 0.22 + shade),
+                            Vec2::splat(TILE),
                         ),
-                        Transform::from_xyz(center.x, center.y + TILE * 0.5 - 3.0, depth_z(Z_PROP, center.y) + 0.05),
+                        Transform::from_xyz(center.x, center.y, wz),
+                        WorldTile,
+                    ));
+                    // Top highlight lip (light catching the top edge).
+                    commands.spawn((
+                        Sprite::from_color(
+                            Color::srgb(0.30, 0.31, 0.37),
+                            Vec2::new(TILE, 7.0),
+                        ),
+                        Transform::from_xyz(center.x, center.y + TILE * 0.5 - 3.5, wz + 0.05),
+                        WorldTile,
+                    ));
+                    // Darker bottom edge for contact shading.
+                    commands.spawn((
+                        Sprite::from_color(
+                            Color::srgb(0.10, 0.10, 0.13),
+                            Vec2::new(TILE, 4.0),
+                        ),
+                        Transform::from_xyz(center.x, center.y - TILE * 0.5 + 2.0, wz + 0.05),
                         WorldTile,
                     ));
                 }

@@ -18,10 +18,15 @@ wasm-bindgen \
   --out-name zombies_bevy \
   "target/wasm32-unknown-unknown/release/${CRATE}.wasm"
 
-# Optional size optimisation if wasm-opt is available.
-if command -v wasm-opt >/dev/null 2>&1; then
-  echo "==> wasm-opt -Oz"
-  wasm-opt -Oz -o "$OUT/zombies_bevy_bg.wasm" "$OUT/zombies_bevy_bg.wasm"
+# Optional size optimisation. NOTE: binaryen must be recent (>= ~v116). Older
+# wasm-opt (e.g. v108) miscompiles wasm-bindgen's externref table and the module
+# fails at init with "WebAssembly.Table.grow(): failed to grow table". If in doubt
+# skip this — the CDN/host serves the wasm brotli-compressed anyway (~7MB on the
+# wire). Enable by exporting WASM_OPT=1 with a modern wasm-opt on PATH.
+if [ "${WASM_OPT:-0}" = "1" ] && command -v wasm-opt >/dev/null 2>&1; then
+  echo "==> wasm-opt -Oz (reference-types)"
+  wasm-opt -Oz --enable-reference-types --enable-bulk-memory \
+    -o "$OUT/zombies_bevy_bg.wasm" "$OUT/zombies_bevy_bg.wasm"
 fi
 
 echo "==> done. Serve ./web or deploy with Vercel."

@@ -8,7 +8,12 @@ Wade through a shambling horde, gather weapons, and survive escalating waves.
 
 ## Play
 
-Deployed as a static site (see **Deploy** below). Locally:
+**▶ Live:** https://zombies-bevy-bobs-dev-attics-projects.vercel.app
+
+(The live page streams the ~14 MB WebAssembly build from the public GitHub repo via
+CDN, so first load takes a few seconds.)
+
+Locally:
 
 ```bash
 # one-time toolchain

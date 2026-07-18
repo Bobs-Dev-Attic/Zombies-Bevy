@@ -10,7 +10,7 @@ pub fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera2d,
         Projection::from(OrthographicProjection {
-            scale: 0.85,
+            scale: 0.62,
             ..OrthographicProjection::default_2d()
         }),
         MainCamera,
@@ -45,5 +45,7 @@ pub fn camera_follow(
 
     cam.translation.x = smoothed.x + offset.x;
     cam.translation.y = smoothed.y + offset.y;
-    cam.translation.z = 999.0;
+    // Keep the 2D camera at z=0 so the ortho near/far window (-1000..1000)
+    // spans all our sprite layers; moving it in z would clip the floor.
+    cam.translation.z = 0.0;
 }
