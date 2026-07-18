@@ -347,9 +347,10 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         let l2 = 13.0; // forearm (longer)
         let w = 6.6; // thicker
 
-        let upper = commands.spawn(rrect(art, skin, l1, w, 0.1)).id();
+        // Upper arm is a short shirt sleeve; the forearm below is bare skin.
+        let upper = commands.spawn(rrect(art, shirt, l1, w, 0.1)).id();
         commands.entity(upper).insert(Transform::from_xyz(l1 * 0.5, 0.0, 0.1));
-        // Elbow joint — a circle.
+        // Elbow joint — a circle (bare skin, where the sleeve ends).
         let elbow = commands.spawn(ellipse(art, skin, w * 1.05, w * 1.05, 0.12)).id();
         commands.entity(elbow).insert(Transform::from_xyz(l1, 0.0, 0.12));
 
@@ -376,7 +377,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let arm_r = build_arm(commands, 0.42);
 
     // ---- Head (smaller, sits at the player's centre) with headgear roots ----
-    let head = commands.spawn(ellipse(art, skin, 11.0, 11.0, 0.25)).id();
+    let head = commands.spawn(ellipse(art, skin, 12.5, 12.5, 0.25)).id();
     let brow = commands.spawn(ellipse(art, skin_dark, 9.0, 3.6, 0.255)).id();
     commands.entity(brow).insert(Transform::from_xyz(1.5, 0.0, 0.255));
 
@@ -386,9 +387,9 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let hair_col = Color::srgb(0.14, 0.10, 0.07);
     let hair_dark = Color::srgb(0.09, 0.06, 0.05);
     let hair = commands.spawn((Transform::default(), Visibility::default())).id();
-    let hair_crown = commands.spawn(ellipse(art, hair_col, 13.0, 12.5, -0.06)).id();
-    commands.entity(hair_crown).insert(Transform::from_xyz(-2.2, 0.0, -0.06));
-    let hair_top = commands.spawn(ellipse(art, hair_col, 10.5, 12.0, 0.30)).id();
+    let hair_crown = commands.spawn(ellipse(art, hair_col, 14.0, 13.5, -0.06)).id();
+    commands.entity(hair_crown).insert(Transform::from_xyz(-2.4, 0.0, -0.06));
+    let hair_top = commands.spawn(ellipse(art, hair_col, 11.5, 13.0, 0.30)).id();
     commands.entity(hair_top).insert(Transform::from_xyz(-2.8, 0.0, 0.30));
     let tuft_a = commands.spawn(ellipse(art, hair_dark, 4.0, 4.5, 0.31)).id();
     commands.entity(tuft_a).insert(Transform::from_xyz(-6.0, 2.5, 0.31));
@@ -422,12 +423,12 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
 
     // Hard combat helmet (protective; toggled on when equipped).
     let helmet_root = commands.spawn((Transform::default(), Visibility::Hidden)).id();
-    let helm_dome = commands.spawn(ellipse(art, Color::srgb(0.22, 0.26, 0.19), 19.0, 18.0, -0.04)).id();
-    commands.entity(helm_dome).insert(Transform::from_xyz(-2.5, 0.0, -0.04));
-    let helm_rim = commands.spawn(rect(Color::srgb(0.13, 0.15, 0.12), 4.0, 18.0, 0.052)).id();
-    commands.entity(helm_rim).insert(Transform::from_xyz(6.0, 0.0, 0.052));
-    let helm_ridge = commands.spawn(rect(Color::srgb(0.15, 0.17, 0.13), 14.0, 2.4, -0.035)).id();
-    commands.entity(helm_ridge).insert(Transform::from_xyz(-2.5, 0.0, -0.035));
+    let helm_dome = commands.spawn(ellipse(art, Color::srgb(0.22, 0.26, 0.19), 16.5, 16.0, -0.04)).id();
+    commands.entity(helm_dome).insert(Transform::from_xyz(-1.0, 0.0, -0.04));
+    let helm_rim = commands.spawn(rect(Color::srgb(0.13, 0.15, 0.12), 3.5, 15.5, 0.052)).id();
+    commands.entity(helm_rim).insert(Transform::from_xyz(6.5, 0.0, 0.052));
+    let helm_ridge = commands.spawn(rect(Color::srgb(0.15, 0.17, 0.13), 12.5, 2.2, -0.035)).id();
+    commands.entity(helm_ridge).insert(Transform::from_xyz(-1.0, 0.0, -0.035));
     commands
         .entity(helmet_root)
         .add_children(&[helm_dome, helm_rim, helm_ridge]);
@@ -445,7 +446,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let flash = commands
         .spawn((
             Sprite::from_color(Color::srgba(1.0, 0.9, 0.5, 0.0), Vec2::splat(6.0)),
-            Transform::from_xyz(24.0, 0.0, 0.3),
+            Transform::from_xyz(31.0, 0.0, 0.3),
         ))
         .id();
 
@@ -655,11 +656,11 @@ pub fn animate_player(
         let sw = if p.swing_dur > 0.0 { p.swing_t / p.swing_dur } else { 0.0 };
         let swing = (1.0 - sw) * 1.4 - 0.7; // sweeps across
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(-1.0, -8.5, 0.1);
+            a.translation = Vec3::new(1.0, -9.0, 0.1);
             a.rotation = Quat::from_rotation_z(swing);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(-1.0, 8.5, 0.1);
+            a.translation = Vec3::new(1.0, 9.0, 0.1);
             a.rotation = Quat::from_rotation_z(swing * 0.6);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
@@ -670,15 +671,15 @@ pub fn animate_player(
         // Two-handed pistol grip pushed out in front, recoiling backward on fire.
         let back = recoil * 5.0;
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(-1.0 - back, -8.5, 0.1);
+            a.translation = Vec3::new(1.0 - back, -9.0, 0.1);
             a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(-1.0 - back, 8.5, 0.1);
+            a.translation = Vec3::new(1.0 - back, 9.0, 0.1);
             a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            wt.translation = Vec3::new(18.0 - back, 0.0, 0.15);
+            wt.translation = Vec3::new(22.0 - back, 0.0, 0.15);
             wt.rotation = Quat::IDENTITY;
         }
     }

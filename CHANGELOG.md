@@ -4,6 +4,16 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.8.2]
+
+### Changed
+- **Player hold & fit tweaks** — the held gun sits further forward so it lines up
+  with the hands (muzzle/flash moved to the new barrel tip); the arms mount
+  directly under the shoulders and a touch wider; the upper arm is now a
+  short **shirt-coloured sleeve** with the bare forearm below; the combat
+  **helmet is smaller and re-centred** to fit the head; and the head diameter is
+  a little larger.
+
 ## [0.8.1]
 
 ### Changed
