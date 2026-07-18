@@ -4,6 +4,31 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.16.0]
+
+### Added
+- **Headshots** — a shot has a chance to blow a zombie's head apart for an instant
+  kill, and the odds climb the **closer** the zombie is to the player. On a
+  headshot the **brains burst out the far side of the head** and the body drops
+  into a sprawled ragdoll corpse.
+- **Getting shot is disfiguring** — a solid hit can **blow a limb clean off**
+  (it tumbles away as a gib with a nub of exposed bone and a spray of blood, and
+  stays gone).
+- **Detailed kill corpses** — fallen zombies now sprawl into a jointed corpse
+  with splayed arms and legs, a blood pool, spilled guts and exposed rib bone;
+  headshot corpses have a burst skull with a brain trail.
+- **Crows** — some corpses have crows feeding on them. They **hop and peck**, and
+  **flap off fast when you get close** (leaving a puff of feathers). Crows can be
+  **shot out of the air** — they burst into feathers and a dead-bird corpse.
+
+### Changed
+- **Flies fly like real flies** — some trace lazy loops, others zig-zag in sharp
+  erratic darts, all buzzing around and congregating on the corpses.
+
+### Removed
+- **The confusing yellow glow pools** (the flickering street-lamp lights) are
+  gone.
+
 ## [0.15.1]
 
 ### Changed

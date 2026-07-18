@@ -189,6 +189,58 @@ fn blood_burst(commands: &mut Commands, pos: Vec2, dir: f32, amount: u32) {
     ));
 }
 
+/// A headshot: brains, skull chips and a red mist blow out along `dir` (the far
+/// side of the head), plus a lingering pink/grey splatter on the ground.
+fn brain_burst(commands: &mut Commands, pos: Vec2, dir: f32) {
+    let mut rng = rand::thread_rng();
+    // Chunks of brain (pinkish-grey) flung out the exit side.
+    for _ in 0..14 {
+        let a = dir + rng.gen_range(-0.6..0.6);
+        let sp = rng.gen_range(120.0..420.0);
+        let g = rng.gen_range(0.55..0.78);
+        spawn_particle(
+            commands,
+            pos,
+            Vec2::new(a.cos(), a.sin()) * sp,
+            Color::srgb(g, g * 0.62, g * 0.66), // pinkish grey
+            rng.gen_range(2.5..5.5),
+            rng.gen_range(0.3..0.65),
+            0.0,
+        );
+    }
+    // Skull chips (bone) + a red mist.
+    for _ in 0..8 {
+        let a = dir + rng.gen_range(-0.8..0.8);
+        let sp = rng.gen_range(160.0..460.0);
+        spawn_particle(
+            commands,
+            pos,
+            Vec2::new(a.cos(), a.sin()) * sp,
+            Color::srgb(0.86, 0.83, 0.74),
+            rng.gen_range(1.6..3.2),
+            rng.gen_range(0.2..0.5),
+            0.0,
+        );
+    }
+    blood_burst(commands, pos, dir, 8);
+    // A pink/grey brain splatter fanning out on the exit side.
+    let fwd = Vec2::new(dir.cos(), dir.sin());
+    for _ in 0..10 {
+        let d = rng.gen_range(6.0..34.0);
+        let off = fwd * d + Vec2::new(rng.gen_range(-10.0..10.0), rng.gen_range(-10.0..10.0));
+        let g = rng.gen_range(0.4..0.6);
+        commands.spawn((
+            Sprite {
+                color: Color::srgba(g, g * 0.45, g * 0.5, rng.gen_range(0.5..0.8)),
+                custom_size: Some(Vec2::splat({let v:f32=rng.gen_range(2.0..5.0);v.round()})),
+                ..default()
+            },
+            Transform::from_xyz(pos.x + off.x, pos.y + off.y, Z_DECAL + rng.gen_range(0.2..0.6)),
+            Decal { life: 14.0 },
+        ));
+    }
+}
+
 /// A little shower of sparks where a round bounces off / punches through a wall.
 fn spark_burst(commands: &mut Commands, pos: Vec2, dir: f32) {
     let mut rng = rand::thread_rng();
@@ -469,8 +521,16 @@ pub fn projectile_system(
     mut proj_q: Query<(Entity, &mut Projectile, &mut Transform)>,
     mut zombies: Query<(Entity, &mut Zombie, &Transform), Without<Projectile>>,
     mut player_q: Query<(&mut Player, &Transform), (Without<Projectile>, Without<Zombie>)>,
+    crows: Query<(Entity, &Transform), (With<crate::ambient::Crow>, Without<Projectile>, Without<Zombie>, Without<Player>)>,
 ) {
     let dt = time.delta_secs();
+    let mut rng = rand::thread_rng();
+    // Player position (for proximity-scaled headshots) — read-only peek.
+    let ppos = player_q
+        .iter()
+        .next()
+        .map(|(_, t)| t.translation.truncate())
+        .unwrap_or(Vec2::ZERO);
     for (pe, mut proj, mut tf) in proj_q.iter_mut() {
         let prev = tf.translation.truncate();
         let step = proj.vel * dt;
@@ -549,8 +609,22 @@ pub fn projectile_system(
                 }
             }
         } else {
+            // Crows can be shot out of the air (feathers + a dead bird).
+            let mut hit_crow = false;
+            for (ce, ctf) in crows.iter() {
+                if (ctf.translation.truncate() - next).length() < 9.0 {
+                    crate::ambient::kill_crow(&mut commands, ctf.translation.truncate(), &mut rng);
+                    commands.entity(ce).despawn();
+                    dead = true;
+                    hit_crow = true;
+                    break;
+                }
+            }
             let dir = proj.vel.y.atan2(proj.vel.x);
             for (ze, mut z, ztf) in zombies.iter_mut() {
+                if hit_crow {
+                    break;
+                }
                 if proj.hit.contains(&ze) {
                     continue;
                 }
@@ -561,6 +635,43 @@ pub fn projectile_system(
                     z.apply_knockback(dir, proj.knockback);
                     blood_burst(&mut commands, zp, dir, 5);
                     proj.hit.push(ze);
+
+                    // Headshot: the closer the zombie is to the player, the better
+                    // the odds. On a hit the brains blow out the FAR side of the
+                    // head and it drops (ragdoll corpse handled at death).
+                    if proj.explosive <= 0.0 && z.hp > 0.0 {
+                        let pdist = (zp - ppos).length();
+                        let hs = (0.10 + (1.0 - (pdist / 520.0).clamp(0.0, 1.0)) * 0.42)
+                            .clamp(0.0, 0.55);
+                        if rng.gen_bool(hs as f64) {
+                            z.hp = 0.0;
+                            z.headshot = true;
+                            let head = zp + Vec2::new(z.angle.cos(), z.angle.sin()) * z.r * 0.5;
+                            brain_burst(&mut commands, head, dir);
+                            dead = true;
+                            break;
+                        }
+                        // Otherwise a solid hit may blow a limb clean off.
+                        else if rng.gen_bool(0.22) && z.severed_mask != 0b1111 {
+                            let mut choices: Vec<i8> = Vec::new();
+                            for l in 0..4i8 {
+                                if z.severed_mask & (1 << l) == 0 {
+                                    // Don't sever a limb the look already lacks.
+                                    let absent = (l == 0 && z.look.missing_arm == 0)
+                                        || (l == 1 && z.look.missing_arm == 1)
+                                        || (l == 2 && z.look.missing_leg == 0)
+                                        || (l == 3 && z.look.missing_leg == 1);
+                                    if !absent {
+                                        choices.push(l);
+                                    }
+                                }
+                            }
+                            if !choices.is_empty() {
+                                z.sever_pending = choices[rng.gen_range(0..choices.len())];
+                            }
+                        }
+                    }
+
                     if proj.explosive > 0.0 {
                         explosions.write(Explosion {
                             pos: next,
@@ -709,30 +820,176 @@ pub fn decal_system(
     }
 }
 
+/// Shoot a limb clean off a wounded zombie: hide the limb, fling a fleshy gib and
+/// a spray of blood, and mark it severed so it stays gone.
+pub fn zombie_disfigure(
+    mut commands: Commands,
+    mut q: Query<(&mut Zombie, &crate::art::Rig, &Transform)>,
+    mut vis_q: Query<&mut Visibility>,
+) {
+    let mut rng = rand::thread_rng();
+    for (mut z, rig, tf) in q.iter_mut() {
+        if z.sever_pending < 0 {
+            continue;
+        }
+        let limb = z.sever_pending;
+        z.sever_pending = -1;
+        if z.severed_mask & (1 << limb) != 0 {
+            continue;
+        }
+        z.severed_mask |= 1 << limb;
+        let e = match limb {
+            0 => rig.arm_l,
+            1 => rig.arm_r,
+            2 => rig.leg_l,
+            _ => rig.leg_r,
+        };
+        if let Ok(mut v) = vis_q.get_mut(e) {
+            *v = Visibility::Hidden;
+        }
+        let pos = tf.translation.truncate();
+        let a = z.angle + rng.gen_range(-1.2..1.2);
+        let dir = Vec2::new(a.cos(), a.sin());
+        // The detached limb tumbles away as a chunk.
+        let (col, w, h) = if limb < 2 {
+            (z.look.skin, 11.0 * z.r / 12.0, 4.5 * z.r / 12.0)
+        } else {
+            (z.look.pants, 8.0 * z.r / 12.0, 5.0 * z.r / 12.0)
+        };
+        commands.spawn((
+            Sprite::from_color(col, Vec2::new(w, h)),
+            Transform {
+                translation: Vec3::new(pos.x, pos.y, Z_PARTICLE + 1.0),
+                rotation: Quat::from_rotation_z(a),
+                ..default()
+            },
+            Particle {
+                vel: dir * rng.gen_range(90.0..220.0),
+                life: 0.9,
+                max_life: 0.9,
+                drag: 0.9,
+                gravity: 0.0,
+                base: col,
+            },
+        ));
+        // A nub of exposed bone left in the gib's wake.
+        commands.spawn((
+            Sprite::from_color(Color::srgb(0.86, 0.83, 0.74), Vec2::splat(2.4)),
+            Transform::from_xyz(pos.x, pos.y, Z_PARTICLE + 1.1),
+            Particle {
+                vel: dir * rng.gen_range(60.0..140.0),
+                life: 0.7,
+                max_life: 0.7,
+                drag: 0.9,
+                gravity: 0.0,
+                base: Color::srgb(0.86, 0.83, 0.74),
+            },
+        ));
+        blood_burst(&mut commands, pos, a, 7);
+    }
+}
+
+/// Sprawl a fallen zombie into a jointed corpse: torso, splayed arms and legs, a
+/// head (or a burst skull with a brain trail on a headshot), plus a blood pool
+/// and some spilled guts. Everything fades over ~half a minute.
+fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, angle: f32, look: &crate::enemy::Look, headshot: bool, rng: &mut impl Rng) {
+    let s = look.size;
+    let life = 30.0;
+    let rot = angle + rng.gen_range(-0.5..0.5); // fell at a messy angle
+    let (ca, sa) = (rot.cos(), rot.sin());
+    let place = |commands: &mut Commands, c: Color, w: f32, h: f32, ox: f32, oy: f32, extra: f32, z: f32| {
+        let wx = pos.x + ox * ca - oy * sa;
+        let wy = pos.y + ox * sa + oy * ca;
+        commands.spawn((
+            Sprite::from_color(c, Vec2::new(w, h)),
+            Transform {
+                translation: Vec3::new(wx, wy, z),
+                rotation: Quat::from_rotation_z(rot + extra),
+                ..default()
+            },
+            Decal { life },
+        ));
+    };
+    // Blood pool under the body (soft gradient).
+    commands.spawn((
+        Sprite {
+            image: art.soft.clone(),
+            color: Color::srgba(0.22, 0.01, 0.02, 0.6),
+            custom_size: Some(Vec2::splat(38.0 * s)),
+            ..default()
+        },
+        Transform::from_xyz(pos.x, pos.y, Z_DECAL + 1.6),
+        Decal { life },
+    ));
+    let shirt = look.shirt.to_srgba();
+    let dark = Color::srgb(shirt.red * 0.5, shirt.green * 0.5, shirt.blue * 0.5);
+    let skin = look.skin;
+    let pants = look.pants;
+    let bone = Color::srgb(0.86, 0.83, 0.74);
+    let zc = Z_DECAL + 2.0;
+    // Splayed limbs (each at its own broken angle).
+    place(commands, skin, 12.0 * s, 4.5 * s, 2.0 * s, 8.0 * s, rng.gen_range(0.4..1.1), zc);
+    place(commands, skin, 12.0 * s, 4.5 * s, 1.0 * s, -8.0 * s, -rng.gen_range(0.4..1.1), zc);
+    place(commands, pants, 13.0 * s, 5.0 * s, -10.0 * s, 4.0 * s, rng.gen_range(-0.4..0.4), zc);
+    place(commands, pants, 13.0 * s, 5.0 * s, -10.0 * s, -4.0 * s, rng.gen_range(-0.4..0.4), zc);
+    // Torso.
+    place(commands, dark, 16.0 * s, 14.0 * s, 0.0, 0.0, 0.0, zc + 0.1);
+    if headshot {
+        // Burst skull: a broken shell + bone chips, brains trailing out the far side.
+        place(commands, skin, 9.0 * s, 8.0 * s, 11.0 * s, 0.0, 0.0, zc + 0.2);
+        place(commands, Color::srgb(0.35, 0.05, 0.06), 7.0 * s, 6.0 * s, 12.0 * s, 0.0, 0.0, zc + 0.22);
+        place(commands, bone, 3.0 * s, 2.0 * s, 13.0 * s, 3.0 * s, 0.6, zc + 0.24);
+        place(commands, bone, 3.0 * s, 2.0 * s, 13.0 * s, -3.0 * s, -0.6, zc + 0.24);
+        // Brain/gore trail streaking forward.
+        let fwd = Vec2::new(ca, sa);
+        for _ in 0..8 {
+            let d = rng.gen_range(14.0..46.0);
+            let off = fwd * d + Vec2::new(rng.gen_range(-9.0..9.0), rng.gen_range(-9.0..9.0));
+            let g = rng.gen_range(0.4..0.6);
+            commands.spawn((
+                Sprite {
+                    color: Color::srgba(g, g * 0.45, g * 0.5, 0.7),
+                    custom_size: Some(Vec2::splat({let v:f32=rng.gen_range(2.0..4.5);v.round()})),
+                    ..default()
+                },
+                Transform::from_xyz(pos.x + off.x, pos.y + off.y, Z_DECAL + 1.7),
+                Decal { life },
+            ));
+        }
+    } else {
+        // Intact-ish head, lolling to one side.
+        place(commands, skin, 11.0 * s, 11.0 * s, 11.0 * s, rng.gen_range(-4.0..4.0), 0.0, zc + 0.2);
+    }
+    // A little spilled gut/organ mess and exposed rib bones by the torso.
+    for _ in 0..rng.gen_range(3..7) {
+        let ox = rng.gen_range(-4.0..8.0) * s;
+        let oy = rng.gen_range(-8.0..8.0) * s;
+        let pink = rng.gen_range(0.4..0.62);
+        place(commands, Color::srgb(pink, 0.12, 0.14), rng.gen_range(3.0..6.0) * s, rng.gen_range(3.0..5.0) * s, ox, oy, rng.gen_range(0.0..3.0), zc + 0.15);
+    }
+    place(commands, bone, 5.0 * s, 1.1 * s, 3.0 * s, 1.0 * s, 0.1, zc + 0.16);
+    place(commands, bone, 5.0 * s, 1.1 * s, 3.0 * s, -1.5 * s, -0.1, zc + 0.16);
+}
+
 /// Turn dead zombies into corpses + gore and bump the score.
 pub fn zombie_death_system(
     mut commands: Commands,
+    art: Res<crate::art::Art>,
     mut score: ResMut<Score>,
     mut player_q: Query<&mut Player>,
     q: Query<(Entity, &Zombie, &Transform)>,
 ) {
+    let mut rng = rand::thread_rng();
     for (e, z, tf) in q.iter() {
         if z.hp > 0.0 && !z.dead {
             continue;
         }
         let pos = tf.translation.truncate();
-        // Gore burst.
-        blood_burst(&mut commands, pos, rand::thread_rng().gen_range(0.0..TAU), (10.0 * z.gore) as u32);
-        // Corpse decal.
-        let s = z.look.shirt.to_srgba();
-        commands.spawn((
-            Sprite::from_color(
-                Color::srgb(s.red * 0.4, s.green * 0.4, s.blue * 0.4),
-                Vec2::new(z.r * 2.4, z.r * 1.8),
-            ),
-            Transform::from_xyz(pos.x, pos.y, Z_DECAL + 2.0),
-            Decal { life: 25.0 },
-        ));
+        // Gore burst (extra on a headshot).
+        let amount = (10.0 * z.gore) as u32 + if z.headshot { 6 } else { 0 };
+        blood_burst(&mut commands, pos, rng.gen_range(0.0..TAU), amount);
+        // A detailed, sprawled corpse.
+        spawn_kill_corpse(&mut commands, &art, pos, z.angle, &z.look, z.headshot, &mut rng);
         score.kills += 1;
         score.points += z.score;
         if let Ok(mut p) = player_q.single_mut() {
