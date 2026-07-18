@@ -17,7 +17,13 @@ pub enum PickupKind {
 pub struct Pickup {
     pub kind: PickupKind,
     pub r: f32,
+    /// Remaining durability for dropped gear; `None` for a fresh (full) pickup.
+    pub dura: Option<f32>,
 }
+
+/// Full durability values for freshly-equipped gear.
+pub const HELMET_FULL: f32 = 55.0;
+pub const ARMOR_FULL: f32 = 110.0;
 
 /// Marker on the bobbing icon container so we can float it.
 #[derive(Component)]
@@ -55,9 +61,20 @@ fn disc(art: &Art, color: Color, d: f32, z: f32) -> impl Bundle {
 }
 
 pub fn spawn_pickup(commands: &mut Commands, art: &Art, pos: Vec2, kind: PickupKind, rng: &mut impl Rng) {
+    spawn_pickup_dura(commands, art, pos, kind, None, rng);
+}
+
+pub fn spawn_pickup_dura(
+    commands: &mut Commands,
+    art: &Art,
+    pos: Vec2,
+    kind: PickupKind,
+    dura: Option<f32>,
+    rng: &mut impl Rng,
+) {
     let root = commands
         .spawn((
-            Pickup { kind, r: 13.0 },
+            Pickup { kind, r: 13.0, dura },
             Transform::from_xyz(pos.x, pos.y, depth_z(Z_CHAR, pos.y)),
             Visibility::default(),
         ))
@@ -197,19 +214,50 @@ pub fn pickup_icon_bob(time: Res<Time>, mut q: Query<(&PickupIcon, &mut Transfor
 
 pub fn pickup_collect(
     mut commands: Commands,
+    art: Res<Art>,
+    world: Res<World>,
     mut player_q: Query<(&mut Player, &Transform)>,
     pickups: Query<(Entity, &Pickup, &Transform)>,
 ) {
+    use crate::player::{BodyGear, HeadGear};
     let Ok((mut p, ptf)) = player_q.single_mut() else { return };
     let pp = ptf.translation.truncate();
+    let mut rng = rand::thread_rng();
+
+    // Drop the currently-worn gear (with its remaining durability) a short way
+    // off so it isn't instantly re-collected, then return the dropped position.
+    let mut drop_gear = |commands: &mut Commands, kind: PickupKind, dura: f32| {
+        // Try a few spots a bit beyond pickup range.
+        for _ in 0..8 {
+            let a = rng.gen_range(0.0..TAU);
+            let at = pp + Vec2::new(a.cos(), a.sin()) * 46.0;
+            if !world.blocks_point(at) {
+                spawn_pickup_dura(commands, &art, at, kind, Some(dura), &mut rng);
+                return;
+            }
+        }
+        spawn_pickup_dura(commands, &art, pp, kind, Some(dura), &mut rng);
+    };
+
     for (e, pick, tf) in pickups.iter() {
         let d = (tf.translation.truncate() - pp).length();
         if d > pick.r + p.r {
             continue;
         }
         match pick.kind {
-            PickupKind::Helmet => p.equip_helmet(55.0),
-            PickupKind::Armor => p.equip_armor(110.0),
+            PickupKind::Helmet => {
+                // Swapping a worn helmet: drop it (keeping its wear) and don it.
+                if p.head_gear == HeadGear::Helmet && p.helmet_dura > 0.0 {
+                    drop_gear(&mut commands, PickupKind::Helmet, p.helmet_dura);
+                }
+                p.equip_helmet(pick.dura.unwrap_or(HELMET_FULL), HELMET_FULL);
+            }
+            PickupKind::Armor => {
+                if p.body_gear == BodyGear::Armor && p.armor_dura > 0.0 {
+                    drop_gear(&mut commands, PickupKind::Armor, p.armor_dura);
+                }
+                p.equip_armor(pick.dura.unwrap_or(ARMOR_FULL), ARMOR_FULL);
+            }
             PickupKind::Medkit => {
                 if p.health >= p.max_health - 1.0 {
                     continue; // leave it for when we're hurt

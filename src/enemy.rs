@@ -151,10 +151,11 @@ pub struct Zombie {
     pub lurch_phase: f32,
     pub gait_t: f32,
     pub stride_rate: f32,
-    pub arm_amp: f32,   // per-zombie arm-swing amplitude
-    pub turn_rate: f32, // per-zombie turn responsiveness (turning radius)
-    pub trail_t: f32,   // countdown to the next blood mark
-    pub foot: i8,       // which foot leaves the next print
+    pub arm_amp: f32,    // per-zombie arm-swing amplitude
+    pub turn_rate: f32,  // per-zombie turn responsiveness (turning radius)
+    pub trail_t: f32,    // countdown to the next blood mark
+    pub foot: i8,        // which foot leaves the next print
+    pub reach_style: f32, // 0 = swing arms, 1 = reach out toward the player
 
     pub look: Look,
     pub dead: bool,
@@ -212,6 +213,8 @@ impl Zombie {
             turn_rate: rng.gen_range(3.0..7.5),
             trail_t: rng.gen_range(0.0..0.5),
             foot: 1,
+            // Most shamble with swinging arms; some hold their arms out reaching.
+            reach_style: if rng.gen_bool(0.4) { rng.gen_range(0.6..1.0) } else { 0.0 },
             look,
             dead: false,
         }
@@ -450,7 +453,18 @@ pub fn zombie_ai(
         z.vel = tvel;
 
         let next = pos + tvel * dt;
-        let resolved = world.collide(next, z.r);
+        let mut resolved = world.collide(next, z.r);
+
+        // Don't occupy the player's space: keep at least (z.r + player r) away,
+        // sliding the zombie to the edge of the player's body if it pushed in.
+        let sep = z.r + 11.0;
+        let to_p = ppos - resolved;
+        let dp = to_p.length();
+        if dp < sep && dp > 0.001 {
+            let pushed = ppos - to_p / dp * sep;
+            resolved = world.collide(pushed, z.r);
+        }
+
         tf.translation.x = resolved.x;
         tf.translation.y = resolved.y;
         tf.translation.z = depth_z(Z_CHAR, resolved.y);
