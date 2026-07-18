@@ -9,7 +9,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 /// Player body colours, shared between rig construction and the per-frame
 /// hurt-flash tint so the base always restores correctly.
 pub const PLAYER_SHIRT: Color = Color::srgb(0.34, 0.40, 0.52); // casual t-shirt
-pub const PLAYER_SKIN: Color = Color::srgb(0.33, 0.23, 0.18);
+pub const PLAYER_SKIN: Color = Color::srgb(0.82, 0.63, 0.49);
 
 /// Shared generated textures for soft circular shapes.
 #[derive(Resource)]
@@ -248,7 +248,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let shirt_dark = Color::srgb(0.24, 0.28, 0.36);
     let shirt_hi = Color::srgb(0.44, 0.50, 0.62);
     let skin = PLAYER_SKIN;
-    let skin_dark = Color::srgb(0.24, 0.16, 0.12);
+    let skin_dark = Color::srgb(0.66, 0.47, 0.35);
     let pants = Color::srgb(0.17, 0.18, 0.20);
     let hat = Color::srgb(0.41, 0.39, 0.25);
     let hat_dark = Color::srgb(0.28, 0.27, 0.16);
@@ -343,8 +343,8 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     // hands meet the gun. Rounded rects so the arms read as muscle, not planks. ----
     let build_arm = |commands: &mut Commands, bend: f32| -> Entity {
         let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
-        let l1 = 8.5; // upper arm (longer)
-        let l2 = 10.5; // forearm (longer)
+        let l1 = 10.5; // upper arm (longer)
+        let l2 = 13.0; // forearm (longer)
         let w = 6.6; // thicker
 
         let upper = commands.spawn(rrect(art, skin, l1, w, 0.1)).id();
@@ -655,11 +655,11 @@ pub fn animate_player(
         let sw = if p.swing_dur > 0.0 { p.swing_t / p.swing_dur } else { 0.0 };
         let swing = (1.0 - sw) * 1.4 - 0.7; // sweeps across
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(-1.0, -5.0, 0.1);
+            a.translation = Vec3::new(-1.0, -8.5, 0.1);
             a.rotation = Quat::from_rotation_z(swing);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(-1.0, 5.0, 0.1);
+            a.translation = Vec3::new(-1.0, 8.5, 0.1);
             a.rotation = Quat::from_rotation_z(swing * 0.6);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
@@ -670,11 +670,11 @@ pub fn animate_player(
         // Two-handed pistol grip pushed out in front, recoiling backward on fire.
         let back = recoil * 5.0;
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(-1.0 - back, -5.0, 0.1);
+            a.translation = Vec3::new(-1.0 - back, -8.5, 0.1);
             a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(-1.0 - back, 5.0, 0.1);
+            a.translation = Vec3::new(-1.0 - back, 8.5, 0.1);
             a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {

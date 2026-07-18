@@ -4,6 +4,15 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.8.1]
+
+### Changed
+- **Arms reworked** — longer upper-arm and forearm segments, and the shoulders
+  are set wider so the arms spread out further from the head for a broader,
+  more natural two-handed stance.
+- **Lighter skin tone** — the player's skin (and bare arms/hands) is a lighter
+  shade.
+
 ## [0.8.0]
 
 ### Changed
