@@ -4,6 +4,16 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.15.0]
+
+### Added
+- **Bat gets its own model and two swings** — the Bat now shows a **wooden club**
+  (instead of the knife blade) and is swung **two-handed**, alternating between a
+  horizontal **baseball swing** (the club whips across the front) and an overhead
+  **executioner chop** (raised behind the head, then driven down forward). Both
+  hands are solved with **2-bone inverse kinematics** so they actually grip the
+  handle throughout the swing.
+
 ## [0.14.2]
 
 ### Fixed

@@ -55,6 +55,8 @@ pub struct WeaponVisuals {
     pub rifle_mag: Entity,
     /// The side-by-side's break-action barrel pivot (hinges open on reload).
     pub sxs_barrel: Entity,
+    /// A wooden bat/club model (shown for the Bat instead of the knife blade).
+    pub bat_model: Entity,
 }
 
 /// The player's two forearm (elbow) pivots, so poses can bend the arms — e.g.
@@ -494,13 +496,26 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         g
     };
 
-    // Melee (knife/bat): a short blade forward of a dark handle.
+    // Melee knife: a short blade forward of a dark handle.
     let melee_g = {
         let blade = part(commands, steel, 16.0, 3.0, 9.0, 0.0);
         let tip = part(commands, steel, 3.0, 5.0, 17.0, 0.0);
         let guard = part(commands, gun_dark, 2.5, 6.0, 1.0, 0.0);
         let handle = part(commands, wood, 5.0, 3.0, -2.0, 0.0);
         group(commands, vec![blade, tip, guard, handle])
+    };
+
+    // Bat: a wooden club — thin handle at the grip (origin) tapering out to a
+    // fat barrel. Shown for the Bat weapon in place of the knife blade.
+    let bat_wood = Color::srgb(0.46, 0.31, 0.17);
+    let bat_wood_hi = Color::srgb(0.55, 0.38, 0.22);
+    let bat_model = {
+        let knob = part(commands, gun_dark, 2.5, 3.6, -2.0, 0.0);
+        let grip = part(commands, bat_wood, 6.0, 2.8, 2.0, 0.0);
+        let shaft = part(commands, bat_wood, 10.0, 3.6, 10.0, 0.0);
+        let barrel = part(commands, bat_wood_hi, 9.0, 5.4, 18.5, 0.0);
+        let cap = part(commands, bat_wood, 3.0, 5.8, 23.5, 0.0);
+        group(commands, vec![knob, grip, shaft, barrel, cap])
     };
 
     // Pistol: compact slide + grip + magazine. The slide and magazine are
@@ -598,6 +613,8 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g, sxs_g,
     ];
     commands.entity(weapon).add_children(&weapon_roots);
+    // The bat shares the melee slot but swaps in its own model.
+    commands.entity(weapon).add_child(bat_model);
 
     // Small square flash at the barrel tip (pixelated, not a soft glow).
     let flash = commands
@@ -657,6 +674,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         shotgun_pump,
         rifle_mag,
         sxs_barrel,
+        bat_model,
     });
     commands.entity(root).insert(PlayerArms { fore_l, fore_r });
 }
@@ -893,6 +911,25 @@ fn melee_fore_bend_r(stab: bool, arc: f32) -> f32 {
     }
 }
 
+/// Two-bone inverse kinematics for an arm: given the shoulder pivot and a target
+/// for the fist, return (shoulder_rotation, elbow_bend) that lands the hand on
+/// the target. `side` (±1) picks which way the elbow bows. Segment lengths match
+/// the player rig (upper arm 12.5, forearm 13 + 1 to the fist ≈ 14).
+fn ik_arm(shoulder: Vec2, target: Vec2, side: f32) -> (f32, f32) {
+    let a: f32 = 12.5;
+    let b: f32 = 14.0;
+    let to = target - shoulder;
+    let d = to.length().clamp((a - b).abs() + 0.5, a + b - 0.5);
+    let base = to.y.atan2(to.x);
+    let cos_a = ((a * a + d * d - b * b) / (2.0 * a * d)).clamp(-1.0, 1.0);
+    let r1 = base + side * cos_a.acos();
+    // Point the forearm straight at the target from the resolved elbow.
+    let elbow = shoulder + Vec2::new(r1.cos(), r1.sin()) * a;
+    let to_hand = target - elbow;
+    let r2 = to_hand.y.atan2(to_hand.x) - r1;
+    (r1, r2)
+}
+
 pub fn animate_player(
     player_q: Query<(&Player, &Rig, &WeaponVisuals, &PlayerArms)>,
     mut tf_q: Query<&mut Transform>,
@@ -966,6 +1003,8 @@ pub fn animate_player(
     // Arms + weapon depend on weapon type / recoil / swing / reload.
     let w = p.weapon();
     let melee = w.kind == WeaponKind::Melee;
+    // The bat shares the Melee kind but is a two-handed club with its own swings.
+    let is_bat = melee && w.name == "Bat";
     let recoil = p.recoil;
     let mag_fed = matches!(
         w.kind,
@@ -976,16 +1015,24 @@ pub fn animate_player(
     let cur_kind = w.kind.index();
     for (i, &e) in wv.roots.iter().enumerate() {
         if let Ok(mut v) = vis_q.get_mut(e) {
-            *v = if i == cur_kind {
+            *v = if i == cur_kind && !(is_bat && i == 0) {
+                // The bat swaps its own model in for the melee (knife) slot.
                 Visibility::Inherited
             } else {
                 Visibility::Hidden
             };
         }
     }
-    // The knife is worked one-handed, so hide the left arm while it's out.
+    if let Ok(mut v) = vis_q.get_mut(wv.bat_model) {
+        *v = if is_bat { Visibility::Inherited } else { Visibility::Hidden };
+    }
+    // The knife is worked one-handed (hide the left arm); the bat is two-handed.
     if let Ok(mut v) = vis_q.get_mut(rig.arm_l) {
-        *v = if melee { Visibility::Hidden } else { Visibility::Inherited };
+        *v = if melee && !is_bat {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
     }
 
     // Reload progress (0..1) drives a per-gun reload animation whose length
@@ -1012,9 +1059,58 @@ pub fn animate_player(
         0.0
     };
 
+    // Elbow bends the bat computes via IK, applied in the forearm-bend section.
+    let mut bat_fore: Option<(f32, f32)> = None;
+
     // Arms are shoulder pivots at the shoulders; the forearm bend (baked in)
     // brings both hands onto the gun. We drive the shoulder position + rotation.
-    if melee {
+    if is_bat {
+        // Two-handed club. Attacks alternate a horizontal BASEBALL swing (the bat
+        // whips across the front) and an overhead EXECUTIONER chop (raised behind
+        // the head, then driven down forward). Both hands are placed on the handle
+        // and the arms are solved by IK so they actually grip it.
+        let sw = if p.swing_dur > 0.0 {
+            (p.swing_t / p.swing_dur).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let arc = (sw * std::f32::consts::PI).sin(); // 0 rest .. 1 full strike
+        let chop = p.melee_stab;
+        // Grip point (bat handle origin) and bat heading.
+        let (g, theta) = if chop {
+            // Overhead: raised behind the head (bat points back), chops to forward.
+            (
+                Vec2::new(-2.0 + arc * 15.0, 0.0),
+                std::f32::consts::PI * (1.0 - arc),
+            )
+        } else {
+            // Baseball: cocked over the right shoulder, sweeps across to front-left.
+            (
+                Vec2::new(2.0 + arc * 14.0, -6.0 + arc * 12.0),
+                2.4 - arc * 3.1,
+            )
+        };
+        let dir = Vec2::new(theta.cos(), theta.sin());
+        let hand_r = g + dir * 4.0; // rear hand on the handle
+        let hand_l = g + dir * 1.0; // front hand, just ahead of it
+        let sh_r = Vec2::new(1.0, -7.5);
+        let sh_l = Vec2::new(1.0, 7.5);
+        let (r1r, r2r) = ik_arm(sh_r, hand_r, -1.0);
+        let (r1l, r2l) = ik_arm(sh_l, hand_l, 1.0);
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+            a.translation = Vec3::new(sh_r.x, sh_r.y, 0.1);
+            a.rotation = Quat::from_rotation_z(r1r);
+        }
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+            a.translation = Vec3::new(sh_l.x, sh_l.y, 0.1);
+            a.rotation = Quat::from_rotation_z(r1l);
+        }
+        if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
+            wt.translation = Vec3::new(g.x, g.y, 0.15);
+            wt.rotation = Quat::from_rotation_z(theta);
+        }
+        bat_fore = Some((r2l, r2r));
+    } else if melee {
         // One-armed knife work in the RIGHT hand (the left arm is hidden for
         // melee — see below). Attacks alternate a wide SLASH (the arm swings the
         // blade across the chest) and a forward STAB (the elbow straightens to
@@ -1135,7 +1231,10 @@ pub fn animate_player(
     // Forearm (elbow) bends. Default to the baked resting bend; the shotgun folds
     // the elbows for its pump/trigger, and a mag-fed reload folds the right elbow
     // down so the hand reaches the magazine well under the grip.
-    let (fore_bend_l, mut fore_bend_r) = if melee {
+    let (fore_bend_l, mut fore_bend_r) = if let Some((fl, fr)) = bat_fore {
+        // The bat's elbows come straight from the two-handed grip IK.
+        (fl, fr)
+    } else if melee {
         // Left elbow folds hard so the hand tucks low at the waist. The right
         // elbow stays bent (knife cocked) for a slash, and straightens out as it
         // drives forward on a stab.
