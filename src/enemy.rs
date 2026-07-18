@@ -173,6 +173,9 @@ pub struct Zombie {
 
     pub look: Look,
     pub dead: bool,
+    pub headshot: bool,     // killed by a headshot → brain burst + ragdoll corpse
+    pub sever_pending: i8,  // a limb to shoot off this frame: -1 none, 0..3 limb
+    pub severed_mask: u8,   // bitmask of limbs already blown off
 }
 
 impl Zombie {
@@ -243,6 +246,9 @@ impl Zombie {
             reach_r,
             look,
             dead: false,
+            headshot: false,
+            sever_pending: -1,
+            severed_mask: 0,
         }
     }
 

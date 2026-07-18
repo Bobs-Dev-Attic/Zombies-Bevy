@@ -93,7 +93,10 @@ fn main() {
                 ),
                 enemy::wave_system,
                 combat::spit_system,
-                combat::projectile_system,
+                (
+                    combat::projectile_system,
+                    combat::zombie_disfigure.after(combat::projectile_system),
+                ),
                 combat::explosion_system,
                 combat::particle_system,
                 combat::decal_system,
@@ -125,13 +128,13 @@ fn main() {
                 .after(player::player_update)
                 .run_if(in_state(GameState::Playing)),
         )
-        // ambient atmosphere: flies, twitching corpses, flickering lights
+        // ambient atmosphere: flies, twitching corpses, feeding crows
         .add_systems(
             Update,
             (
                 ambient::fly_system,
                 ambient::twitch_system,
-                ambient::flicker_system,
+                ambient::crow_system,
             )
                 .run_if(in_state(GameState::Playing)),
         )

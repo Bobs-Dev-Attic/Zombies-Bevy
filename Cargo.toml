@@ -1,6 +1,6 @@
 [package]
 name = "zombies-bevy"
-version = "0.15.1"
+version = "0.16.0"
 edition = "2021"
 description = "Zombies: Escape the Horde — a high-density pixel-art top-down zombie shooter, rebuilt in Bevy."
 

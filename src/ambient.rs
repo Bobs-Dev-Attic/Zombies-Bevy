@@ -7,13 +7,30 @@ use bevy::prelude::*;
 use rand::Rng;
 use std::f32::consts::TAU;
 
-/// A fly that hovers around a home point (a corpse), darting between nearby spots.
+/// A fly that hovers around a home point (a corpse). Some fly lazy circles, some
+/// zig-zag erratically, all with a jittery buzz.
 #[derive(Component)]
 pub struct Fly {
     pub home: Vec2,
     pub vel: Vec2,
-    pub target: Vec2, // current spot it's drifting toward
-    pub t: f32,       // countdown to the next dart
+    pub target: Vec2, // current spot it's drifting toward (zig-zaggers)
+    pub t: f32,       // countdown to the next zig
+    pub circler: bool,
+    pub spin: f32,      // orbit angle (circlers)
+    pub spin_rate: f32, // orbit angular speed
+    pub radius: f32,    // orbit radius
+}
+
+/// A crow feeding at a corpse: it hops and pecks, and flees when disturbed.
+#[derive(Component)]
+pub struct Crow {
+    pub home: Vec2,
+    pub head: Entity,
+    pub vel: Vec2,
+    pub target: Vec2,
+    pub t: f32,       // hop / peck timer
+    pub peck: f32,    // pecking bob phase
+    pub fleeing: bool,
 }
 
 /// A corpse that twitches — periodic little jerks of the body.
@@ -23,14 +40,6 @@ pub struct Twitch {
     pub t: f32,
     pub next: f32,
     pub jerk: f32,
-}
-
-/// A flickering light pool on the ground (alpha wavers like a dying bulb).
-#[derive(Component)]
-pub struct Flicker {
-    pub base: f32,
-    pub phase: f32,
-    pub rate: f32,
 }
 
 fn soft(art: &Art, color: Color, w: f32, h: f32, z: f32, x: f32, y: f32) -> impl Bundle {
@@ -116,51 +125,22 @@ pub fn scatter_ambient(commands: &mut Commands, art: &Art, world: &World, center
         spawn_blood_pool(commands, art, p, rng.gen_range(0.8..1.6), &mut rng);
     }
 
-    // ---- Corpses (some twitching, some with guts) ----
+    // ---- Corpses (some twitching, some with guts), with flies and the odd crow ----
     for _ in 0..10 {
         let Some(p) = floor_pt(world, center, &mut rng, 70.0) else { continue };
         let gutsy = rng.gen_bool(0.4);
         let twitchy = !gutsy && rng.gen_bool(0.5);
         spawn_corpse(commands, art, p, gutsy, twitchy, &mut rng);
-        // A couple of flies hover over each corpse.
-        for _ in 0..rng.gen_range(2..5) {
+        // A cloud of flies hovers over each corpse.
+        for _ in 0..rng.gen_range(3..6) {
             spawn_fly(commands, p, &mut rng);
         }
-    }
-
-    // ---- Flickering street-lamp pools ----
-    // A pool of light on the ground with a brighter core (the bulb reflection),
-    // both flickering together so it reads as a failing overhead light.
-    for _ in 0..6 {
-        let Some(p) = floor_pt(world, center, &mut rng, 120.0) else { continue };
-        let phase = rng.gen_range(0.0..TAU);
-        let rate = rng.gen_range(5.0..11.0);
-        let base = rng.gen_range(0.07..0.12);
-        let size = rng.gen_range(150.0..220.0);
-        // Soft outer glow pool.
-        commands.spawn((
-            Sprite {
-                image: art.soft.clone(),
-                color: Color::srgba(1.0, 0.9, 0.66, base),
-                custom_size: Some(Vec2::splat(size)),
-                ..default()
-            },
-            Transform::from_xyz(p.x, p.y, Z_DECAL + 3.0),
-            Flicker { base, phase, rate },
-            Cleanup,
-        ));
-        // Bright, tight core — the lit spot right under the bulb.
-        commands.spawn((
-            Sprite {
-                image: art.soft.clone(),
-                color: Color::srgba(1.0, 0.94, 0.72, base * 2.4),
-                custom_size: Some(Vec2::splat(size * 0.34)),
-                ..default()
-            },
-            Transform::from_xyz(p.x, p.y, Z_DECAL + 3.2),
-            Flicker { base: base * 2.4, phase, rate },
-            Cleanup,
-        ));
+        // Some corpses have a crow or two feeding on them.
+        if rng.gen_bool(0.4) {
+            for _ in 0..rng.gen_range(1..3) {
+                spawn_crow(commands, p, &mut rng);
+            }
+        }
     }
 }
 
@@ -263,14 +243,23 @@ fn spawn_fly(commands: &mut Commands, home: Vec2, rng: &mut impl Rng) {
     commands.spawn((
         Sprite::from_color(Color::srgb(0.05, 0.05, 0.06), Vec2::splat(2.2)),
         Transform::from_xyz(p.x, p.y, Z_PARTICLE + 2.0),
-        Fly { home, vel: Vec2::ZERO, target: p, t: rng.gen_range(0.0..0.5) },
+        Fly {
+            home,
+            vel: Vec2::ZERO,
+            target: p,
+            t: rng.gen_range(0.0..0.4),
+            circler: rng.gen_bool(0.45),
+            spin: rng.gen_range(0.0..TAU),
+            spin_rate: rng.gen_range(3.5..7.0) * if rng.gen_bool(0.5) { 1.0 } else { -1.0 },
+            radius: rng.gen_range(6.0..16.0),
+        },
         Cleanup,
     ));
 }
 
-/// Flies hover and congregate around their corpse: they mostly hold near a spot,
-/// then dart to a new nearby spot now and then — a jittery hover, not a swarm.
-/// They give the player a small berth without zooming off.
+/// Flies congregate around their corpse and buzz like real flies: some fly lazy
+/// loops, others zig-zag in sharp erratic darts — all jittery. They give the
+/// player a small berth without zooming clean off.
 pub fn fly_system(
     time: Res<Time>,
     player_q: Query<&Transform, (With<Player>, Without<Fly>)>,
@@ -282,36 +271,224 @@ pub fn fly_system(
     for (mut fly, mut tf) in q.iter_mut() {
         let pos = tf.translation.truncate();
         let home = fly.home;
-        // Occasionally dart to a fresh spot near the corpse (a quick impulse).
-        fly.t -= dt;
-        if fly.t <= 0.0 {
-            fly.t = rng.gen_range(0.25..0.9);
-            let a = rng.gen_range(0.0..TAU);
-            let r = rng.gen_range(3.0..15.0);
-            let target = home + Vec2::new(a.cos(), a.sin()) * r;
+        if fly.circler {
+            // Trace a lazy loop around the corpse, with a little wobble.
+            fly.spin += fly.spin_rate * dt;
+            let spin = fly.spin;
+            let radius = fly.radius;
+            let target = home + Vec2::new(spin.cos(), spin.sin()) * radius;
             fly.target = target;
-            let to = target - pos;
-            let d = to.length().max(0.01);
-            fly.vel += to / d * rng.gen_range(45.0..120.0);
+            fly.vel += (target - pos) * 9.0 * dt;
+            fly.vel += Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 22.0 * dt;
+        } else {
+            // Zig-zag: hold a heading briefly, then snap to a new sharp one.
+            fly.t -= dt;
+            if fly.t <= 0.0 {
+                fly.t = rng.gen_range(0.1..0.35);
+                let a = rng.gen_range(0.0..TAU);
+                let r = rng.gen_range(4.0..18.0);
+                let target = home + Vec2::new(a.cos(), a.sin()) * r;
+                fly.target = target;
+                let to = target - pos;
+                let d = to.length().max(0.01);
+                fly.vel += to / d * rng.gen_range(70.0..150.0); // sharp dart
+            }
+            let target = fly.target;
+            fly.vel += (target - pos) * 2.0 * dt;
+            fly.vel += Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 40.0 * dt;
         }
-        // Ease toward the current spot, with a tiny constant hover jitter.
-        let target = fly.target;
-        fly.vel += (target - pos) * 2.2 * dt;
-        fly.vel += Vec2::new(rng.gen_range(-1.0..1.0), rng.gen_range(-1.0..1.0)) * 26.0 * dt;
         // Keep a little distance from the player, gently (drift, don't flee).
         if let Some(pp) = ppos {
             let to = pos - pp;
             let d = to.length();
             if d < 60.0 && d > 0.01 {
-                fly.vel += to / d * (60.0 - d) * 2.2 * dt;
-                fly.target = home;
+                fly.vel += to / d * (60.0 - d) * 2.4 * dt;
             }
         }
-        // Heavy drag makes them settle into a hover between darts.
-        fly.vel *= 0.86_f32.powf(dt * 60.0);
-        fly.vel = fly.vel.clamp_length_max(170.0);
+        fly.vel *= 0.88_f32.powf(dt * 60.0);
+        fly.vel = fly.vel.clamp_length_max(200.0);
         tf.translation.x += fly.vel.x * dt;
         tf.translation.y += fly.vel.y * dt;
+    }
+}
+
+/// A shot crow: a burst of feathers and a splayed dead-bird decal.
+pub fn kill_crow(commands: &mut Commands, pos: Vec2, rng: &mut impl Rng) {
+    for _ in 0..9 {
+        let a = rng.gen_range(0.0..TAU);
+        feather(commands, pos, Vec2::new(a.cos(), a.sin()) * rng.gen_range(40.0..160.0), rng);
+    }
+    // Dead crow lying splayed on the ground.
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.05, 0.05, 0.07), Vec2::new(13.0, 8.0)),
+        Transform {
+            translation: Vec3::new(pos.x, pos.y, Z_DECAL + 2.2),
+            rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+            ..default()
+        },
+        crate::combat::Decal { life: 22.0 },
+    ));
+    // Splayed wings.
+    for s in [-1.0f32, 1.0] {
+        commands.spawn((
+            Sprite::from_color(Color::srgb(0.03, 0.03, 0.05), Vec2::new(9.0, 4.0)),
+            Transform {
+                translation: Vec3::new(pos.x + rng.gen_range(-3.0..3.0), pos.y + s * 5.0, Z_DECAL + 2.3),
+                rotation: Quat::from_rotation_z(s * rng.gen_range(0.3..0.8)),
+                ..default()
+            },
+            crate::combat::Decal { life: 22.0 },
+        ));
+    }
+    // A little blood.
+    commands.spawn((
+        Sprite {
+            color: Color::srgba(0.3, 0.02, 0.03, 0.6),
+            custom_size: Some(Vec2::splat(rng.gen_range(6.0..11.0))),
+            ..default()
+        },
+        Transform::from_xyz(pos.x, pos.y, Z_DECAL + 2.1),
+        crate::combat::Decal { life: 16.0 },
+    ));
+}
+
+/// A drifting black feather particle.
+fn feather(commands: &mut Commands, pos: Vec2, vel: Vec2, rng: &mut impl Rng) {
+    let col = Color::srgb(0.05, 0.05, 0.07);
+    commands.spawn((
+        Sprite::from_color(col, Vec2::new(rng.gen_range(1.8..3.0), 1.4)),
+        Transform {
+            translation: Vec3::new(pos.x, pos.y, Z_PARTICLE + 1.0),
+            rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+            ..default()
+        },
+        crate::combat::Particle {
+            vel,
+            life: rng.gen_range(0.4..0.9),
+            max_life: 0.9,
+            drag: 0.92,
+            gravity: 0.0,
+            base: col,
+        },
+    ));
+}
+
+/// Spawn a crow feeding at a corpse: a small dark body with a beaked head.
+fn spawn_crow(commands: &mut Commands, home: Vec2, rng: &mut impl Rng) {
+    let p = home + Vec2::new(rng.gen_range(-16.0..16.0), rng.gen_range(-16.0..16.0));
+    let body_col = Color::srgb(0.06, 0.06, 0.08);
+    let head = commands
+        .spawn((
+            Sprite::from_color(body_col, Vec2::new(5.0, 4.5)),
+            Transform::from_xyz(6.0, 0.0, 0.02),
+        ))
+        .id();
+    let beak = commands
+        .spawn((
+            Sprite::from_color(Color::srgb(0.5, 0.42, 0.15), Vec2::new(3.5, 1.8)),
+            Transform::from_xyz(4.0, 0.0, 0.03),
+        ))
+        .id();
+    commands.entity(head).add_child(beak);
+    let root = commands
+        .spawn((
+            Transform {
+                translation: Vec3::new(p.x, p.y, Z_PARTICLE + 3.0),
+                rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+                ..default()
+            },
+            Visibility::default(),
+            Crow {
+                home,
+                head,
+                vel: Vec2::ZERO,
+                target: p,
+                t: rng.gen_range(0.4..1.4),
+                peck: rng.gen_range(0.0..TAU),
+                fleeing: false,
+            },
+            Cleanup,
+        ))
+        .id();
+    // Body + folded wings.
+    let body = commands.spawn(Sprite::from_color(body_col, Vec2::new(11.0, 7.0))).id();
+    let wing = commands
+        .spawn((
+            Sprite::from_color(Color::srgb(0.03, 0.03, 0.05), Vec2::new(7.0, 8.5)),
+            Transform::from_xyz(-2.0, 0.0, 0.01),
+        ))
+        .id();
+    commands.entity(root).add_children(&[body, wing, head]);
+}
+
+/// Crows hop and peck at their corpse, and flap off fast when the player nears.
+pub fn crow_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    player_q: Query<&Transform, (With<Player>, Without<Crow>)>,
+    mut q: Query<(Entity, &mut Crow, &mut Transform)>,
+    mut tf_q: Query<&mut Transform, (Without<Crow>, Without<Player>)>,
+) {
+    let dt = time.delta_secs();
+    let ppos = player_q.single().ok().map(|tf| tf.translation.truncate());
+    let mut rng = rand::thread_rng();
+    for (e, mut crow, mut tf) in q.iter_mut() {
+        let pos = tf.translation.truncate();
+        // Disturbed → take flight.
+        if let Some(pp) = ppos {
+            if !crow.fleeing && (pos - pp).length() < 135.0 {
+                crow.fleeing = true;
+                // A couple of feathers puff off as it startles.
+                for _ in 0..4 {
+                    let a = rng.gen_range(0.0..TAU);
+                    feather(&mut commands, pos, Vec2::new(a.cos(), a.sin()) * rng.gen_range(30.0..90.0), &mut rng);
+                }
+            }
+        }
+
+        if crow.fleeing {
+            // Flap away from the player and off the map, then despawn.
+            let away = ppos.map(|pp| (pos - pp)).unwrap_or(Vec2::new(1.0, 0.0));
+            let away = away.normalize_or_zero();
+            crow.vel += away * 900.0 * dt;
+            crow.vel = crow.vel.clamp_length_max(360.0);
+            // Flap: the wings/head bob quickly (fake by bobbing the head).
+            crow.peck += dt * 22.0;
+            if let Ok(mut h) = tf_q.get_mut(crow.head) {
+                h.translation.y = (crow.peck).sin() * 2.0;
+            }
+            if (pos - crow.home).length() > 620.0 {
+                commands.entity(e).despawn();
+                continue;
+            }
+        } else {
+            // Feed: hop to a new nearby spot now and then, pecking in between.
+            crow.t -= dt;
+            if crow.t <= 0.0 {
+                crow.t = rng.gen_range(0.6..1.8);
+                let a = rng.gen_range(0.0..TAU);
+                let r = rng.gen_range(4.0..14.0);
+                crow.target = crow.home + Vec2::new(a.cos(), a.sin()) * r;
+                let to = crow.target - pos;
+                crow.vel += to.normalize_or_zero() * rng.gen_range(30.0..70.0);
+            }
+            let target = crow.target;
+            crow.vel += (target - pos) * 3.0 * dt;
+            crow.vel *= 0.82_f32.powf(dt * 60.0);
+            // Peck: the head dips down and back up.
+            crow.peck += dt * 6.0;
+            if let Ok(mut h) = tf_q.get_mut(crow.head) {
+                let dip = (crow.peck.sin() * 0.5 + 0.5).powf(2.0);
+                h.translation.x = 6.0 - dip * 3.0;
+                h.translation.y = -dip * 1.5;
+            }
+        }
+        // Face travel direction and move.
+        if crow.vel.length_squared() > 1.0 {
+            tf.rotation = Quat::from_rotation_z(crow.vel.y.atan2(crow.vel.x));
+        }
+        tf.translation.x += crow.vel.x * dt;
+        tf.translation.y += crow.vel.y * dt;
     }
 }
 
@@ -332,17 +509,3 @@ pub fn twitch_system(time: Res<Time>, mut q: Query<(&mut Twitch, &mut Transform)
     }
 }
 
-/// Flickering lights waver in intensity like failing bulbs.
-pub fn flicker_system(time: Res<Time>, mut q: Query<(&Flicker, &mut Sprite)>) {
-    let t = time.elapsed_secs();
-    let mut rng = rand::thread_rng();
-    for (fl, mut sprite) in q.iter_mut() {
-        // A couple of sine terms plus noise → an uneven, buzzing flicker.
-        let s = (t * fl.rate + fl.phase).sin() * 0.5 + (t * fl.rate * 2.7 + fl.phase).sin() * 0.25;
-        let noise = rng.gen_range(-0.1..0.1);
-        let a = (fl.base * (1.0 + s * 0.55 + noise)).clamp(0.02, fl.base * 1.9);
-        // Keep the current warm tint (core is brighter via its larger base).
-        let c = sprite.color.to_srgba();
-        sprite.color = Color::srgba(c.red, c.green, c.blue, a);
-    }
-}
