@@ -865,23 +865,27 @@ pub fn animate_player(
             wt.rotation = Quat::from_rotation_z(swing);
         }
     } else if w.kind == WeaponKind::Shotgun {
-        // Pump shotgun is fired from the hip: held low across the waist and
-        // angled, one hand on the grip at the hip and the other working the pump.
-        let back = recoil * 4.0;
-        // The support hand works the pump (slides fore/aft as it's racked).
+        // Shouldered pump shotgun: the butt is tucked into the right armpit and
+        // the barrel angles up to centre. The left arm starts under the left
+        // shoulder and reaches forward to the fore-end (working the pump); the
+        // right arm is bent inward to the grip.
+        let back = recoil * 3.0;
         let pump = recoil.max(rack);
+        // Left/support hand: mounted under the left shoulder, forward on the
+        // fore-end, sliding back a little as the pump is racked.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(9.0 - pump * 4.0, 3.0, 0.1);
-            a.rotation = Quat::from_rotation_z(0.25);
+            a.translation = Vec3::new(2.0 - pump * 3.0, 7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.12);
         }
+        // Right/trigger hand: mounted under the right shoulder, bent inward.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(0.0 - back, -8.0, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.28);
+            a.translation = Vec3::new(2.0 - back, -7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(0.4);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            // Low at the waist, barrel angled across the body.
-            wt.translation = Vec3::new(16.0 - back, -6.0, 0.15);
-            wt.rotation = Quat::from_rotation_z(-0.34);
+            // Butt at the right armpit; barrel angled up so its tip is centred.
+            wt.translation = Vec3::new(6.0 - back, -6.5, 0.15);
+            wt.rotation = Quat::from_rotation_z(0.28);
         }
     } else {
         // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
