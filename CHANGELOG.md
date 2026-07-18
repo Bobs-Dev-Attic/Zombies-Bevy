@@ -4,6 +4,17 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.4.0]
+
+### Changed
+- **Blocky player construction** — the torso and backpack are now built from
+  squares and rectangles instead of ellipses (a main body block plus a chest
+  plate, shoulder blocks, back block and collar).
+- **Articulated arms** — each arm is now two rectangle segments (upper arm +
+  forearm) hinged at a **circular elbow**, ending in a circular hand, with the
+  forearm bent inward so both hands meet the pistol. Driven from the shoulder so
+  the whole limb swings/recoils as one.
+
 ## [0.3.0]
 
 ### Added
