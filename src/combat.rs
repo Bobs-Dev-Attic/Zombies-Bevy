@@ -18,6 +18,9 @@ pub struct Projectile {
     pub sever: f32,
     pub explosive: f32,
     pub pierce: i32,
+    pub ricochet: u32,
+    pub wall_pierce: u32,
+    pub falloff: f32,
     pub hostile: bool,
     pub hit: Vec<Entity>,
 }
@@ -45,17 +48,18 @@ pub struct MuzzleFlash {
     pub max: f32,
 }
 
-/// Spawn a blocky star of squares bursting forward from the barrel tip.
+/// Spawn a blocky star of squares bursting forward from the barrel tip. `scale`
+/// sizes the burst (bigger for the rifle and explosives).
 pub fn spawn_muzzle_flash(
     commands: &mut Commands,
     muzzle: Vec2,
     angle: f32,
-    big: bool,
+    scale: f32,
     rng: &mut impl Rng,
 ) {
     let fwd = Vec2::new(angle.cos(), angle.sin());
     let perp = Vec2::new(-angle.sin(), angle.cos());
-    let scale = if big { 1.6 } else { 1.0 };
+    let big = scale >= 1.4;
     let core = Color::srgb(1.0, 0.98, 0.85);
     let mid = Color::srgb(1.0, 0.82, 0.35);
     let outer = Color::srgb(1.0, 0.55, 0.18);
@@ -185,6 +189,24 @@ fn blood_burst(commands: &mut Commands, pos: Vec2, dir: f32, amount: u32) {
     ));
 }
 
+/// A little shower of sparks where a round bounces off / punches through a wall.
+fn spark_burst(commands: &mut Commands, pos: Vec2, dir: f32) {
+    let mut rng = rand::thread_rng();
+    for _ in 0..5 {
+        let a = dir + std::f32::consts::PI + rng.gen_range(-0.9..0.9);
+        let sp = rng.gen_range(120.0..300.0);
+        spawn_particle(
+            commands,
+            pos,
+            Vec2::new(a.cos(), a.sin()) * sp,
+            Color::srgb(1.0, 0.85, 0.5),
+            rng.gen_range(1.6..2.8),
+            rng.gen_range(0.1..0.25),
+            0.0,
+        );
+    }
+}
+
 pub fn firing_system(
     time: Res<Time>,
     input: Res<InputState>,
@@ -213,7 +235,16 @@ pub fn firing_system(
     p.cooldown = 1.0 / w.rate;
 
     let angle = p.angle;
-    let muzzle = pos + Vec2::new(angle.cos(), angle.sin()) * 34.0;
+    // Muzzle sits at each weapon's barrel tip (the rifle's barrel reaches well
+    // out in front of the body) so the flash and rounds leave from the right spot.
+    let (muzzle_dist, flash_scale) = match w.kind {
+        WeaponKind::Rifle => (50.0, 1.5),
+        WeaponKind::Smg => (42.0, 1.0),
+        WeaponKind::Shotgun => (37.0, 1.15),
+        WeaponKind::Launcher => (50.0, 1.8),
+        _ => (34.0, 1.0), // pistol
+    };
+    let muzzle = pos + Vec2::new(angle.cos(), angle.sin()) * muzzle_dist;
 
     if w.kind == WeaponKind::Melee {
         p.swing_dur = 0.22;
@@ -272,7 +303,7 @@ pub fn firing_system(
     }
 
     // Pixelated muzzle flash: a blocky star of squares bursting from the tip.
-    spawn_muzzle_flash(&mut commands, muzzle, angle, w.explosive > 0.0, &mut rng);
+    spawn_muzzle_flash(&mut commands, muzzle, angle, flash_scale, &mut rng);
 
     for _ in 0..w.pellets {
         // Guard against a zero-spread weapon (e.g. the bazooka): sampling an
@@ -304,7 +335,10 @@ pub fn firing_system(
                 knockback: w.knockback,
                 sever: w.sever,
                 explosive: w.explosive,
-                pierce: if w.kind == WeaponKind::Rifle { 1 } else { 0 },
+                pierce: w.pierce,
+                ricochet: w.ricochet,
+                wall_pierce: w.wall_pierce,
+                falloff: w.falloff,
                 hostile: false,
                 hit: Vec::new(),
             },
@@ -372,6 +406,9 @@ pub fn spit_system(mut ev: EventReader<SpitEvent>, mut commands: Commands) {
                 sever: 0.0,
                 explosive: 0.0,
                 pierce: 0,
+                ricochet: 0,
+                wall_pierce: 0,
+                falloff: 1.0,
                 hostile: true,
                 hit: Vec::new(),
             },
@@ -400,7 +437,6 @@ pub fn projectile_system(
         let mut dead = proj.traveled >= proj.range;
 
         if world.blocks_point(next) {
-            dead = true;
             if proj.explosive > 0.0 {
                 explosions.write(Explosion {
                     pos: next,
@@ -409,6 +445,49 @@ pub fn projectile_system(
                     knockback: proj.knockback,
                     sever: proj.sever,
                 });
+                dead = true;
+            } else if proj.ricochet > 0 {
+                // Small-calibre bounce: flip the velocity component that crossed
+                // the wall, back the round out of it, and lose a little power.
+                let hit_x = world.blocks_point(Vec2::new(next.x, prev.y));
+                let hit_y = world.blocks_point(Vec2::new(prev.x, next.y));
+                if hit_x && !hit_y {
+                    proj.vel.x = -proj.vel.x;
+                } else if hit_y && !hit_x {
+                    proj.vel.y = -proj.vel.y;
+                } else {
+                    proj.vel = -proj.vel;
+                }
+                proj.ricochet -= 1;
+                proj.damage *= proj.falloff;
+                tf.translation.x = prev.x;
+                tf.translation.y = prev.y;
+                // A few sparks off the wall.
+                spark_burst(&mut commands, next, proj.vel.y.atan2(proj.vel.x));
+            } else if proj.wall_pierce > 0 {
+                // Big-calibre punch-through: step past the wall, keep going with
+                // reduced killing power.
+                let dir = proj.vel.normalize_or_zero();
+                let mut p = next;
+                let mut cleared = false;
+                for _ in 0..24 {
+                    p += dir * 4.0;
+                    if !world.blocks_point(p) {
+                        cleared = true;
+                        break;
+                    }
+                }
+                if cleared {
+                    proj.wall_pierce -= 1;
+                    proj.damage *= proj.falloff;
+                    tf.translation.x = p.x;
+                    tf.translation.y = p.y;
+                    spark_burst(&mut commands, next, dir.y.atan2(dir.x));
+                } else {
+                    dead = true;
+                }
+            } else {
+                dead = true;
             }
         }
 
@@ -447,7 +526,9 @@ pub fn projectile_system(
                         break;
                     }
                     if proj.pierce > 0 {
+                        // Punches on through, losing killing power each target.
                         proj.pierce -= 1;
+                        proj.damage *= proj.falloff;
                     } else {
                         dead = true;
                         break;

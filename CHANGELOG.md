@@ -4,6 +4,23 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.11.0]
+
+### Added
+- **Caliber-based ballistics** — small calibres **ricochet off walls** (pistol and
+  machine gun bounce, throwing sparks), while big powerful rounds **punch through
+  multiple targets and even walls** (assault rifle), **losing killing power** with
+  each penetration or bounce.
+
+### Changed
+- **Per-gun reload animations** — each firearm reloads its own way. The pistol
+  and assault rifle now play a **magazine change**: the support hand drops to the
+  well at the **bottom of the grip** and drives a fresh mag up (the rifle's mag is
+  bigger) instead of loading from the side; the shotgun still racks its pump; the
+  bazooka reloads its rocket.
+- **Assault-rifle muzzle flash** is now **larger** and sits **further out at the
+  barrel tip**, well clear of the body.
+
 ## [0.10.4]
 
 ### Fixed

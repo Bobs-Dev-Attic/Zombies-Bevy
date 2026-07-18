@@ -52,6 +52,7 @@ pub struct WeaponVisuals {
     pub pistol_slide: Entity,
     pub pistol_mag: Entity,
     pub shotgun_pump: Entity,
+    pub rifle_mag: Entity,
 }
 
 /// The player's two forearm (elbow) pivots, so poses can bend the arms — e.g.
@@ -525,14 +526,15 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         group(commands, vec![stock, grip, receiver, barrel, shotgun_pump])
     };
 
-    // Assault rifle: long body, curved mag, thin barrel, stock, pistol grip.
+    // Assault rifle: long body, a big curved mag (animated on reload), thin
+    // barrel, stock, pistol grip.
+    let rifle_mag = part(commands, gun_dark, 5.0, 9.0, 6.0, -6.0);
     let rifle_g = {
         let stock = part(commands, gun_dark, 7.0, 5.0, -4.0, 0.0);
         let body = part(commands, gun, 20.0, 4.5, 9.0, 0.0);
-        let mag = part(commands, gun_dark, 4.5, 8.0, 6.0, -5.5);
         let barrel = part(commands, gun_dark, 9.0, 2.4, 21.0, 0.0);
         let grip = part(commands, gun_dark, 4.0, 5.0, 2.5, -4.0);
-        group(commands, vec![stock, body, grip, mag, barrel])
+        group(commands, vec![stock, body, grip, rifle_mag, barrel])
     };
 
     // Bazooka: fat tube with a rear vent, top sight and a pistol grip.
@@ -603,6 +605,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         pistol_slide,
         pistol_mag,
         shotgun_pump,
+        rifle_mag,
     });
     commands.entity(root).insert(PlayerArms { fore_l, fore_r });
 }
@@ -837,6 +840,10 @@ pub fn animate_player(
     let w = p.weapon();
     let melee = w.kind == WeaponKind::Melee;
     let recoil = p.recoil;
+    let mag_fed = matches!(
+        w.kind,
+        WeaponKind::Pistol | WeaponKind::Smg | WeaponKind::Rifle
+    );
 
     // Show only the equipped weapon's model.
     let cur_kind = w.kind.index();
@@ -916,33 +923,37 @@ pub fn animate_player(
         }
     } else {
         // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
-        // fire and dipping while reloading.
+        // fire. On a reload the left hand keeps the gun steady while the right
+        // hand fetches a magazine and drives it up into the well at the bottom
+        // of the grip (forearm folds handle the reach — applied below).
         let back = recoil * 5.0;
-        // Left/support hand keeps the gun steady; the right hand drops to the
-        // mag well and comes back up during a reload (a small, contained move).
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
             a.translation = Vec3::new(1.0 - back, 7.5, 0.1);
             a.rotation = Quat::from_rotation_z(0.10 * swap);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(1.0 - back - 3.0 * swap, -7.5 + 6.5 * swap, 0.1);
-            a.rotation = Quat::from_rotation_z(0.32 * swap);
+            // Drops straight down under the grip to seat the magazine.
+            a.translation = Vec3::new(1.0 - back, -7.5 - 1.5 * swap, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.5 * swap);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            // Barrel dips a little while reloading.
-            wt.translation = Vec3::new(24.0 - back, -2.0 * swap, 0.15);
-            wt.rotation = Quat::from_rotation_z(-0.28 * swap);
+            // Tips toward the shooter a touch while reloading.
+            wt.translation = Vec3::new(24.0 - back, -1.0 * swap, 0.15);
+            wt.rotation = Quat::from_rotation_z(0.14 * swap);
         }
     }
 
-    // Forearm (elbow) bends. Default to the baked resting bend that meets both
-    // hands on a normal gun; the shotgun folds the elbows harder so the hands
-    // land on its pump and trigger.
-    let (fore_bend_l, fore_bend_r) = if w.kind == WeaponKind::Shotgun {
+    // Forearm (elbow) bends. Default to the baked resting bend; the shotgun folds
+    // the elbows for its pump/trigger, and a mag-fed reload folds the right elbow
+    // down so the hand reaches the magazine well under the grip.
+    let (fore_bend_l, mut fore_bend_r) = if w.kind == WeaponKind::Shotgun {
         (-1.26, 2.36)
     } else {
         (-0.42, 0.42)
     };
+    if mag_fed && reloading && w.kind != WeaponKind::Shotgun {
+        fore_bend_r = 0.42 + 1.15 * swap;
+    }
     if let Ok(mut f) = tf_q.get_mut(pa.fore_l) {
         f.rotation = Quat::from_rotation_z(fore_bend_l);
     }
@@ -966,33 +977,56 @@ pub fn animate_player(
         t.translation.x = -recoil * 1.3;
     }
 
-    // Pistol slide racks back and the magazine drops out / re-seats on reload.
+    // Pistol slide racks back a little as the fresh magazine is chambered.
     if let Ok(mut st) = tf_q.get_mut(wv.pistol_slide) {
         st.translation.x = 7.0 - 4.5 * rack;
     }
-    // The magazine is normally tucked inside the grip (not drawn). It only
-    // appears during the second half of a pistol reload, sliding up into the
-    // well as the fresh mag is seated.
-    let seating = w.kind == WeaponKind::Pistol && reloading && rl >= 0.5;
-    if let Ok(mut mv) = vis_q.get_mut(wv.pistol_mag) {
-        *mv = if seating {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
+
+    // Magazine drop/insert. The mag sits in the gun normally; on a reload it
+    // drops away (a spent-mag particle handles the fall) for the first half,
+    // then a fresh one rises up into the well at the bottom of the grip.
+    // (rest_y = seated position, rise = how far below it comes from.)
+    let out = reloading && rl < 0.5;
+    let seat = if reloading && rl >= 0.5 {
+        ((rl - 0.5) / 0.28).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    // Pistol mag (rest at grip bottom).
+    {
+        let show = w.kind == WeaponKind::Pistol && !out;
+        if let Ok(mut mv) = vis_q.get_mut(wv.pistol_mag) {
+            *mv = if show { Visibility::Inherited } else { Visibility::Hidden };
+        }
+        if let Ok(mut mt) = tf_q.get_mut(wv.pistol_mag) {
+            mt.translation.y = -4.5 - (1.0 - seat) * 10.0;
+        }
     }
-    if let Ok(mut mt) = tf_q.get_mut(wv.pistol_mag) {
-        let seat = if seating {
-            ((rl - 0.5) / 0.22).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        // Rises from below the grip up into the well.
-        mt.translation.y = -9.0 + seat * 5.0;
+    // Rifle mag (bigger, further forward under the receiver).
+    {
+        let show = w.kind == WeaponKind::Rifle && !out;
+        if let Ok(mut mv) = vis_q.get_mut(wv.rifle_mag) {
+            *mv = if show { Visibility::Inherited } else { Visibility::Hidden };
+        }
+        if let Ok(mut mt) = tf_q.get_mut(wv.rifle_mag) {
+            mt.translation.y = -6.0 - (1.0 - seat) * 13.0;
+        }
     }
 
-    // Muzzle flash.
+    // Muzzle flash: sit it at each weapon's barrel tip and make the rifle's
+    // bigger (and the bazooka's), so it reads clear of the body.
+    let (flash_x, flash_sz) = match w.kind {
+        WeaponKind::Rifle => (50.0, 12.0),
+        WeaponKind::Smg => (42.0, 7.0),
+        WeaponKind::Shotgun => (37.0, 8.0),
+        WeaponKind::Launcher => (50.0, 11.0),
+        _ => (39.0, 6.0), // pistol
+    };
+    if let Ok(mut ft) = tf_q.get_mut(rig.flash) {
+        ft.translation.x = flash_x;
+    }
     if let Ok(mut fs) = sprite_q.get_mut(rig.flash) {
+        fs.custom_size = Some(Vec2::splat(flash_sz));
         fs.color = Color::srgba(1.0, 0.85, 0.4, (p.muzzle * 6.0).clamp(0.0, 1.0) * 0.9);
     }
 
