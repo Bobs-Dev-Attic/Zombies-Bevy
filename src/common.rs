@@ -30,15 +30,76 @@ pub enum GameState {
     GameOver,
 }
 
+/// Cheat / assist toggles listed under Options → Game Settings.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Cheat {
+    AllWeapons,
+    UnlimitedAmmo,
+    SuperStamina,
+    SuperArmor,
+}
+pub const CHEATS: [Cheat; 4] = [
+    Cheat::AllWeapons,
+    Cheat::UnlimitedAmmo,
+    Cheat::SuperStamina,
+    Cheat::SuperArmor,
+];
+impl Cheat {
+    pub fn label(self) -> &'static str {
+        match self {
+            Cheat::AllWeapons => "All Weapons",
+            Cheat::UnlimitedAmmo => "Unlimited Ammo",
+            Cheat::SuperStamina => "Super Stamina",
+            Cheat::SuperArmor => "Super Armor",
+        }
+    }
+    pub fn hint(self) -> &'static str {
+        match self {
+            Cheat::AllWeapons => "every gun kept loaded and ready",
+            Cheat::UnlimitedAmmo => "reserves never run dry",
+            Cheat::SuperStamina => "never tire, sprint forever",
+            Cheat::SuperArmor => "1000% better protection",
+        }
+    }
+}
+
 /// Persistent player settings.
 #[derive(Resource)]
 pub struct Settings {
     /// 0 = fully manual aiming, 1 = snap instantly to the nearest zombie.
     pub aim_assist: f32,
+    pub all_weapons: bool,
+    pub unlimited_ammo: bool,
+    pub super_stamina: bool,
+    pub super_armor: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { aim_assist: 0.6 }
+        Self {
+            aim_assist: 0.6,
+            all_weapons: false,
+            unlimited_ammo: false,
+            super_stamina: false,
+            super_armor: false,
+        }
+    }
+}
+impl Settings {
+    pub fn cheat(&self, c: Cheat) -> bool {
+        match c {
+            Cheat::AllWeapons => self.all_weapons,
+            Cheat::UnlimitedAmmo => self.unlimited_ammo,
+            Cheat::SuperStamina => self.super_stamina,
+            Cheat::SuperArmor => self.super_armor,
+        }
+    }
+    pub fn toggle_cheat(&mut self, c: Cheat) {
+        match c {
+            Cheat::AllWeapons => self.all_weapons = !self.all_weapons,
+            Cheat::UnlimitedAmmo => self.unlimited_ammo = !self.unlimited_ammo,
+            Cheat::SuperStamina => self.super_stamina = !self.super_stamina,
+            Cheat::SuperArmor => self.super_armor = !self.super_armor,
+        }
     }
 }
 

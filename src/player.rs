@@ -51,6 +51,7 @@ pub struct Player {
     pub armor_max: f32,
     pub armor_flash: f32,  // brief flash when armour soaks a hit
     pub hurt_amount: f32,  // health damage taken this frame (drives the red vignette)
+    pub dmg_mul: f32,      // incoming-damage multiplier (Super Armor cheat drops it)
 
     // animation / feedback
     pub walk_frame: f32,
@@ -99,6 +100,7 @@ impl Default for Player {
             armor_max: 0.0,
             armor_flash: 0.0,
             hurt_amount: 0.0,
+            dmg_mul: 1.0,
             walk_frame: 0.0,
             idle_t: 0.0,
             moving: false,
@@ -160,7 +162,8 @@ impl Player {
         if self.invuln > 0.0 {
             return;
         }
-        let mut dmg = amount;
+        // Super Armor cuts the blow before any gear soaks it.
+        let mut dmg = amount * self.dmg_mul;
         // A helmet soaks a slice of every blow until it shatters.
         if self.head_gear == HeadGear::Helmet && self.helmet_dura > 0.0 && dmg > 0.0 {
             let soak = self.helmet_dura.min(dmg * 0.4);
@@ -379,6 +382,45 @@ pub fn player_update(
     {
         p.start_reload();
     }
+}
+
+/// Apply the Game-Settings cheats each frame while playing.
+pub fn apply_cheats(settings: Res<Settings>, mut q: Query<&mut Player>) {
+    let Ok(mut p) = q.single_mut() else {
+        return;
+    };
+    // All Weapons: keep every gun topped up so any weapon is ready the instant
+    // you switch to it (no reload needed on swap).
+    if settings.all_weapons {
+        for (i, w) in WEAPONS.iter().enumerate() {
+            if w.clip > 0 && p.clip[i] < w.clip {
+                p.clip[i] = w.clip;
+            }
+        }
+    }
+    // Unlimited Ammo: reserves never deplete and the current clip stays full, so
+    // firing never triggers a reload.
+    if settings.unlimited_ammo {
+        p.rounds = 999;
+        p.shells = 999;
+        p.rockets = 999;
+        for (i, w) in WEAPONS.iter().enumerate() {
+            if w.clip > 0 {
+                p.clip[i] = w.clip;
+            }
+        }
+        if p.reloading > 0.0 {
+            p.reloading = 0.0;
+            p.reload_total = 0.0;
+        }
+    }
+    // Super Stamina: the bar stays pinned full and you're never winded.
+    if settings.super_stamina {
+        p.stamina = p.max_stamina;
+        p.exhausted = false;
+    }
+    // Super Armor: soak all but a tenth of every blow (1000% better protection).
+    p.dmg_mul = if settings.super_armor { 0.1 } else { 1.0 };
 }
 
 /// On touch, aim assist: face the nearest zombie (with the same turn lag) so

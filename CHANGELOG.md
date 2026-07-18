@@ -4,6 +4,21 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.12.0]
+
+### Added
+- **Anatomical zombie limbs** — zombie arms and legs are now built like the
+  player's: two-segment limbs with a **shoulder, elbow, hip, knee** and a
+  **foot**. Elbows fold and knees flex through the walk, drag and reach
+  animations so the horde moves with real joints instead of stiff planks. (Each
+  joint is now a separately-addressable part — the groundwork for the upcoming
+  feature where limbs can be missing or get shot off.)
+- **Game Settings (cheats)** in the Options menu — a list of toggles:
+  - **All Weapons** — every gun kept loaded and ready to fire on switch.
+  - **Unlimited Ammo** — reserves never run dry (and no reloads interrupt you).
+  - **Super Stamina** — never tire; sprint forever.
+  - **Super Armor** — 1000% better protection (you take a tenth of all damage).
+
 ## [0.11.0]
 
 ### Added
