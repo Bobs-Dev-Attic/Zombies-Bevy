@@ -4,6 +4,18 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.10.3]
+
+### Changed
+- **Shotgun fires straight** — the barrel now runs level along the aim line (the
+  stock drops to the shoulder instead of angling the whole gun), so shots leave
+  the muzzle straight down the sights.
+- **Pump-action animation** — firing racks the fore-end: the left hand pulls the
+  pump back to chamber a fresh shell while the spent shell ejects.
+- **Firing kickback** — the head and upper body rock back a little on each shot.
+- **Slimmer player** — the body is thinner front-to-back, and the body-armour
+  plate carrier was reshaped to match.
+
 ## [0.10.2]
 
 ### Changed

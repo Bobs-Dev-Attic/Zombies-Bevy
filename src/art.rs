@@ -321,12 +321,12 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
 
     // ---- Torso: rectangular body with softly rounded back & shoulders ----
     // The main body block is `torso` (recoloured on hit); the rest are detail.
-    let torso = commands.spawn(rrect(art, shirt, 20.0, 16.0, 0.0)).id();
-    // Rounded back/upper-back hump (thinner).
-    let back_block = commands.spawn(rrect(art, shirt_dark, 11.0, 16.0, -0.01)).id();
-    commands.entity(back_block).insert(Transform::from_xyz(-5.5, 0.0, -0.01));
-    let chest = commands.spawn(rrect(art, shirt_hi, 10.0, 10.0, 0.02)).id();
-    commands.entity(chest).insert(Transform::from_xyz(3.0, 0.0, 0.02));
+    let torso = commands.spawn(rrect(art, shirt, 15.0, 16.0, 0.0)).id();
+    // Rounded back/upper-back hump (thinner front-to-back).
+    let back_block = commands.spawn(rrect(art, shirt_dark, 8.0, 16.0, -0.01)).id();
+    commands.entity(back_block).insert(Transform::from_xyz(-4.0, 0.0, -0.01));
+    let chest = commands.spawn(rrect(art, shirt_hi, 8.0, 10.0, 0.02)).id();
+    commands.entity(chest).insert(Transform::from_xyz(2.0, 0.0, 0.02));
     // Rounded shoulders (set a little narrower).
     let shoulder_l = commands.spawn(rrect(art, shirt, 7.0, 8.0, 0.03)).id();
     commands.entity(shoulder_l).insert(Transform::from_xyz(1.0, 7.5, 0.03));
@@ -334,17 +334,18 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -7.5, 0.03));
     // Body-armour plate carrier (toggled on when equipped).
     let armor_root = commands.spawn((Transform::default(), Visibility::Hidden)).id();
-    let vest = commands.spawn(rect(Color::srgb(0.15, 0.16, 0.14), 19.0, 17.0, 0.05)).id();
-    let plate = commands.spawn(rect(Color::srgb(0.22, 0.24, 0.20), 12.0, 12.0, 0.06)).id();
-    commands.entity(plate).insert(Transform::from_xyz(3.0, 0.0, 0.06));
-    let pouch_a = commands.spawn(rect(Color::srgb(0.12, 0.13, 0.11), 5.0, 6.0, 0.07)).id();
+    // Match the slimmer torso (thinner front-to-back).
+    let vest = commands.spawn(rect(Color::srgb(0.15, 0.16, 0.14), 14.0, 17.0, 0.05)).id();
+    let plate = commands.spawn(rect(Color::srgb(0.22, 0.24, 0.20), 9.0, 12.0, 0.06)).id();
+    commands.entity(plate).insert(Transform::from_xyz(2.0, 0.0, 0.06));
+    let pouch_a = commands.spawn(rect(Color::srgb(0.12, 0.13, 0.11), 4.0, 6.0, 0.07)).id();
     commands.entity(pouch_a).insert(Transform::from_xyz(-2.0, 5.0, 0.07));
-    let pouch_b = commands.spawn(rect(Color::srgb(0.12, 0.13, 0.11), 5.0, 6.0, 0.07)).id();
+    let pouch_b = commands.spawn(rect(Color::srgb(0.12, 0.13, 0.11), 4.0, 6.0, 0.07)).id();
     commands.entity(pouch_b).insert(Transform::from_xyz(-2.0, -5.0, 0.07));
-    let a_strap_l = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.09), 6.0, 3.0, 0.07)).id();
-    commands.entity(a_strap_l).insert(Transform::from_xyz(6.0, 7.0, 0.07));
-    let a_strap_r = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.09), 6.0, 3.0, 0.07)).id();
-    commands.entity(a_strap_r).insert(Transform::from_xyz(6.0, -7.0, 0.07));
+    let a_strap_l = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.09), 5.0, 3.0, 0.07)).id();
+    commands.entity(a_strap_l).insert(Transform::from_xyz(4.5, 7.0, 0.07));
+    let a_strap_r = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.09), 5.0, 3.0, 0.07)).id();
+    commands.entity(a_strap_r).insert(Transform::from_xyz(4.5, -7.0, 0.07));
     commands
         .entity(armor_root)
         .add_children(&[vest, plate, pouch_a, pouch_b, a_strap_l, a_strap_r]);
@@ -506,13 +507,16 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         group(commands, vec![stock, body, grip, mag, barrel])
     };
 
-    // Shotgun: long barrel, sliding pump, wood stock.
-    let shotgun_pump = part(commands, gun_dark, 6.0, 5.5, 10.0, -1.0);
+    // Shotgun: barrel runs along the centreline (so it fires straight down the
+    // sights) with a dropped stock + grip tucked below toward the shoulder. The
+    // pump slides along the barrel.
+    let shotgun_pump = part(commands, gun_dark, 6.0, 5.0, 9.0, 0.0);
     let shotgun_g = {
-        let barrel = part(commands, gun, 22.0, 4.0, 12.0, 0.0);
-        let stock = part(commands, wood, 9.0, 5.0, -3.5, 0.0);
-        let grip = part(commands, gun_dark, 4.0, 5.0, 1.0, -3.5);
-        group(commands, vec![stock, grip, barrel, shotgun_pump])
+        let barrel = part(commands, gun, 24.0, 4.0, 13.0, 0.0);
+        let receiver = part(commands, gun_dark, 6.0, 5.0, 2.0, -0.5);
+        let stock = part(commands, wood, 9.0, 4.5, -3.5, -3.0);
+        let grip = part(commands, gun_dark, 4.0, 5.5, 0.5, -4.5);
+        group(commands, vec![stock, grip, receiver, barrel, shotgun_pump])
     };
 
     // Assault rifle: long body, curved mag, thin barrel, stock, pistol grip.
@@ -874,24 +878,26 @@ pub fn animate_player(
             wt.rotation = Quat::from_rotation_z(swing);
         }
     } else if w.kind == WeaponKind::Shotgun {
-        // Shouldered pump shotgun: butt held just in front of the right armpit,
-        // barrel angled up so its tip is centred. The left elbow folds to put the
-        // hand on the pump (working it as it racks); the right elbow cocks back so
-        // the hand sits at the trigger. (Forearm folds are applied below.)
-        let back = recoil * 3.0;
+        // Shouldered pump shotgun. The barrel runs level along the aim line so it
+        // fires straight; the stock drops to the shoulder. The left hand works
+        // the pump (racking back on each shot to eject + chamber a shell) and the
+        // right elbow cocks back to the trigger. (Forearm folds applied below.)
+        let back = recoil * 2.5;
         let pump = recoil.max(rack);
+        // Left/support hand on the pump — pulls back as it's racked.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(1.0 - pump * 3.0, 7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(0.05);
+            a.translation = Vec3::new(1.0 - pump * 6.0, 7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.15);
         }
+        // Right/trigger hand, cocked back to the grip.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
             a.translation = Vec3::new(1.0 - back, -7.5, 0.1);
-            a.rotation = Quat::from_rotation_z(-1.0);
+            a.rotation = Quat::from_rotation_z(-0.6);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            // Butt in front of the right armpit; barrel angled up, tip centred.
-            wt.translation = Vec3::new(11.0 - back, -6.5, 0.15);
-            wt.rotation = Quat::from_rotation_z(0.28);
+            // Barrel level and centred; recoils straight back on fire.
+            wt.translation = Vec3::new(14.0 - back, 0.0, 0.15);
+            wt.rotation = Quat::IDENTITY;
         }
     } else {
         // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
@@ -918,7 +924,7 @@ pub fn animate_player(
     // hands on a normal gun; the shotgun folds the elbows harder so the hands
     // land on its pump and trigger.
     let (fore_bend_l, fore_bend_r) = if w.kind == WeaponKind::Shotgun {
-        (-1.1, 2.1)
+        (-0.9, 1.9)
     } else {
         (-0.42, 0.42)
     };
@@ -932,7 +938,17 @@ pub fn animate_player(
     // Shotgun pump slides back as it's racked (on fire and through the reload).
     if let Ok(mut pt) = tf_q.get_mut(wv.shotgun_pump) {
         let pump = recoil.max(rack);
-        pt.translation.x = 10.0 - 5.0 * pump;
+        pt.translation.x = 9.0 - 6.0 * pump;
+    }
+
+    // Recoil kick: the head and upper body rock back a touch when firing.
+    if recoil > 0.001 {
+        if let Ok(mut h) = tf_q.get_mut(rig.head) {
+            h.translation.x -= recoil * 2.2;
+        }
+        if let Ok(mut t) = tf_q.get_mut(rig.torso) {
+            t.translation.x -= recoil * 1.3;
+        }
     }
 
     // Pistol slide racks back and the magazine drops out / re-seats on reload.
