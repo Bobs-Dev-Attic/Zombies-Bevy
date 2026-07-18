@@ -4,6 +4,23 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.9.1]
+
+### Added
+- **Mobile weapon-swap button** — a SWAP button above FIRE cycles through the
+  weapons with a tap (touch only).
+
+### Changed
+- **Pistol reload polish** — the other hand now does the magazine change, with a
+  smaller, more contained motion.
+- **Slimmer player** — the back, chest and shoulders are thinner so the body no
+  longer looks so bulky.
+
+### Fixed
+- **Stray square on the pistol** — the magazine is tucked in the grip and only
+  shows while a fresh mag is being seated during a reload, so there's no black
+  block hanging off the side.
+
 ## [0.9.0]
 
 ### Added
