@@ -52,7 +52,50 @@ pub struct WaveText;
 #[derive(Component)]
 pub struct FinalScoreText;
 
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum MenuButton {
+    Play,
+    Options,
+    Back,
+}
+#[derive(Component)]
+pub struct OptionsUi;
+#[derive(Component)]
+pub struct AimSliderTrack;
+#[derive(Component)]
+pub struct AimSliderFill;
+#[derive(Component)]
+pub struct AimSliderHandle;
+#[derive(Component)]
+pub struct AimValueText;
+
 const PANEL: Color = Color::srgba(0.0, 0.0, 0.0, 0.55);
+const BTN_BG: Color = Color::srgb(0.16, 0.17, 0.22);
+const BTN_BG_HOVER: Color = Color::srgb(0.26, 0.28, 0.36);
+
+fn menu_button(parent: &mut ChildSpawnerCommands, label: &str, action: MenuButton) {
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: Val::Px(240.0),
+                height: Val::Px(52.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(BTN_BG),
+            BorderRadius::all(Val::Px(8.0)),
+            action,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new(label),
+                TextFont { font_size: 24.0, ..default() },
+                TextColor(Color::srgb(0.9, 0.9, 0.95)),
+            ));
+        });
+}
 
 pub fn setup_menu(mut commands: Commands) {
     commands
@@ -80,11 +123,9 @@ pub fn setup_menu(mut commands: Commands) {
                 TextFont { font_size: 26.0, ..default() },
                 TextColor(Color::srgb(0.8, 0.8, 0.85)),
             ));
-            p.spawn((
-                Text::new("Click / Tap / Press any key to begin"),
-                TextFont { font_size: 20.0, ..default() },
-                TextColor(Color::srgb(0.6, 0.65, 0.7)),
-            ));
+            p.spawn((Node { margin: UiRect::top(Val::Px(8.0)), ..default() },));
+            menu_button(p, "PLAY", MenuButton::Play);
+            menu_button(p, "OPTIONS", MenuButton::Options);
             p.spawn((
                 Text::new(
                     "WASD move  •  Mouse aim  •  Click fire  •  Shift sprint\nR reload (auto when empty)  •  1-7 or E swap weapon  •  Mobile: on-screen stick + FIRE button",
@@ -97,7 +138,7 @@ pub fn setup_menu(mut commands: Commands) {
                 Text::new(format!("v{}", VERSION)),
                 TextFont { font_size: 15.0, ..default() },
                 TextColor(Color::srgb(0.4, 0.42, 0.48)),
-                Node { margin: UiRect::top(Val::Px(24.0)), ..default() },
+                Node { margin: UiRect::top(Val::Px(16.0)), ..default() },
             ));
         });
 }
@@ -105,6 +146,220 @@ pub fn setup_menu(mut commands: Commands) {
 pub fn teardown_menu(mut commands: Commands, q: Query<Entity, With<MenuUi>>) {
     for e in q.iter() {
         commands.entity(e).despawn();
+    }
+}
+
+#[derive(Component)]
+pub struct AimAdjust(pub f32);
+
+const SLIDER_W: f32 = 300.0;
+
+pub fn setup_options(mut commands: Commands, settings: Res<Settings>) {
+    let frac = settings.aim_assist.clamp(0.0, 1.0);
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                row_gap: Val::Px(18.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.04, 0.9)),
+            OptionsUi,
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text::new("OPTIONS"),
+                TextFont { font_size: 52.0, ..default() },
+                TextColor(Color::srgb(0.85, 0.85, 0.9)),
+            ));
+            p.spawn((
+                Text::new("Aim Assist accuracy"),
+                TextFont { font_size: 22.0, ..default() },
+                TextColor(Color::srgb(0.75, 0.8, 0.85)),
+            ));
+            p.spawn((
+                Text::new(format!("{}%", (frac * 100.0).round() as i32)),
+                TextFont { font_size: 26.0, ..default() },
+                TextColor(Color::srgb(0.5, 0.85, 0.6)),
+                AimValueText,
+            ));
+            // [ - ]  [ ==== slider ==== ]  [ + ]
+            p.spawn((Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(14.0),
+                ..default()
+            },))
+                .with_children(|row| {
+                    small_button(row, "-", AimAdjust(-0.1));
+                    row.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(SLIDER_W),
+                            height: Val::Px(18.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.18, 0.19, 0.24)),
+                        BorderRadius::all(Val::Px(9.0)),
+                        bevy::ui::RelativeCursorPosition::default(),
+                        AimSliderTrack,
+                    ))
+                    .with_children(|t| {
+                        t.spawn((
+                            Node {
+                                width: Val::Percent(frac * 100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.35, 0.75, 0.5)),
+                            BorderRadius::all(Val::Px(9.0)),
+                            AimSliderFill,
+                        ));
+                        t.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(frac * SLIDER_W - 9.0),
+                                top: Val::Px(-6.0),
+                                width: Val::Px(18.0),
+                                height: Val::Px(30.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.92, 0.95, 1.0)),
+                            BorderRadius::all(Val::Px(5.0)),
+                            AimSliderHandle,
+                        ));
+                    });
+                    small_button(row, "+", AimAdjust(0.1));
+                });
+            p.spawn((
+                Text::new("Drag the slider, tap - / +, or use Left / Right\n0% = manual aiming    100% = instant lock-on"),
+                TextFont { font_size: 15.0, ..default() },
+                TextColor(Color::srgb(0.5, 0.55, 0.6)),
+                Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
+            ));
+            p.spawn((Node { margin: UiRect::top(Val::Px(6.0)), ..default() },));
+            menu_button(p, "BACK", MenuButton::Back);
+        });
+}
+
+fn small_button(parent: &mut ChildSpawnerCommands, label: &str, adjust: AimAdjust) {
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: Val::Px(44.0),
+                height: Val::Px(44.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(BTN_BG),
+            BorderRadius::all(Val::Px(8.0)),
+            adjust,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new(label),
+                TextFont { font_size: 28.0, ..default() },
+                TextColor(Color::srgb(0.9, 0.9, 0.95)),
+            ));
+        });
+}
+
+pub fn teardown_options(mut commands: Commands, q: Query<Entity, With<OptionsUi>>) {
+    for e in q.iter() {
+        commands.entity(e).despawn();
+    }
+}
+
+/// Handle PLAY / OPTIONS / BACK buttons (Menu + Options states).
+pub fn menu_buttons(
+    keys: Res<ButtonInput<KeyCode>>,
+    state: Res<State<GameState>>,
+    mut next: ResMut<NextState<GameState>>,
+    mut q: Query<(&Interaction, &MenuButton, &mut BackgroundColor), Changed<Interaction>>,
+) {
+    for (interaction, action, mut bg) in q.iter_mut() {
+        if *interaction == Interaction::Pressed {
+            match action {
+                MenuButton::Play => next.set(GameState::Playing),
+                MenuButton::Options => next.set(GameState::Options),
+                MenuButton::Back => next.set(GameState::Menu),
+            }
+        }
+        bg.0 = match *interaction {
+            Interaction::Hovered | Interaction::Pressed => BTN_BG_HOVER,
+            Interaction::None => BTN_BG,
+        };
+    }
+    // Keyboard shortcuts.
+    match state.get() {
+        GameState::Menu => {
+            if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+                next.set(GameState::Playing);
+            }
+            if keys.just_pressed(KeyCode::KeyO) {
+                next.set(GameState::Options);
+            }
+        }
+        GameState::Options => {
+            if keys.just_pressed(KeyCode::Escape) {
+                next.set(GameState::Menu);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Drag / adjust the aim-assist slider and reflect it in the UI.
+pub fn options_slider(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut settings: ResMut<Settings>,
+    track_q: Query<(&Interaction, &bevy::ui::RelativeCursorPosition), With<AimSliderTrack>>,
+    adjust_q: Query<(&Interaction, &AimAdjust), Changed<Interaction>>,
+    mut fill_q: Query<&mut Node, (With<AimSliderFill>, Without<AimSliderHandle>)>,
+    mut handle_q: Query<&mut Node, (With<AimSliderHandle>, Without<AimSliderFill>)>,
+    mut value_q: Query<&mut Text, With<AimValueText>>,
+) {
+    let mut v = settings.aim_assist;
+    // Drag: while the track is pressed, take the cursor's normalized x.
+    for (interaction, rel) in track_q.iter() {
+        if *interaction == Interaction::Pressed {
+            if let Some(n) = rel.normalized {
+                v = n.x.clamp(0.0, 1.0);
+            }
+        }
+    }
+    // − / + buttons.
+    for (interaction, adj) in adjust_q.iter() {
+        if *interaction == Interaction::Pressed {
+            v = (v + adj.0).clamp(0.0, 1.0);
+        }
+    }
+    // Arrow keys.
+    if keys.just_pressed(KeyCode::ArrowLeft) {
+        v = (v - 0.05).clamp(0.0, 1.0);
+    }
+    if keys.just_pressed(KeyCode::ArrowRight) {
+        v = (v + 0.05).clamp(0.0, 1.0);
+    }
+
+    if (v - settings.aim_assist).abs() > 0.0001 {
+        settings.aim_assist = v;
+    }
+    let frac = settings.aim_assist.clamp(0.0, 1.0);
+    if let Ok(mut n) = fill_q.single_mut() {
+        n.width = Val::Percent(frac * 100.0);
+    }
+    if let Ok(mut n) = handle_q.single_mut() {
+        n.left = Val::Px(frac * SLIDER_W - 9.0);
+    }
+    if let Ok(mut t) = value_q.single_mut() {
+        **t = format!("{}%", (frac * 100.0).round() as i32);
     }
 }
 

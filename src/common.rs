@@ -25,8 +25,21 @@ pub const Z_FX: f32 = 70.0;
 pub enum GameState {
     #[default]
     Menu,
+    Options,
     Playing,
     GameOver,
+}
+
+/// Persistent player settings.
+#[derive(Resource)]
+pub struct Settings {
+    /// 0 = fully manual aiming, 1 = snap instantly to the nearest zombie.
+    pub aim_assist: f32,
+}
+impl Default for Settings {
+    fn default() -> Self {
+        Self { aim_assist: 0.6 }
+    }
 }
 
 /// A running tally the HUD reads.

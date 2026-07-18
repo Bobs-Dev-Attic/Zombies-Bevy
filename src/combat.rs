@@ -37,18 +37,82 @@ pub struct Decal {
     pub life: f32,
 }
 
-/// A brief burst of light at the muzzle that fades over a few frames.
+/// A single crisp square of the pixelated muzzle flash. Snaps through a couple
+/// of frames then vanishes (no fade to a gradient — it "flashes").
 #[derive(Component)]
-pub struct MuzzleLight {
+pub struct MuzzleFlash {
     pub life: f32,
     pub max: f32,
-    pub size: f32,
 }
 
-pub fn muzzle_light_system(
+/// Spawn a blocky star of squares bursting forward from the barrel tip.
+pub fn spawn_muzzle_flash(
+    commands: &mut Commands,
+    muzzle: Vec2,
+    angle: f32,
+    big: bool,
+    rng: &mut impl Rng,
+) {
+    let fwd = Vec2::new(angle.cos(), angle.sin());
+    let perp = Vec2::new(-angle.sin(), angle.cos());
+    let scale = if big { 1.6 } else { 1.0 };
+    let core = Color::srgb(1.0, 0.98, 0.85);
+    let mid = Color::srgb(1.0, 0.82, 0.35);
+    let outer = Color::srgb(1.0, 0.55, 0.18);
+    let life = 0.07;
+
+    // Star pattern: (forward offset, side offset, square size, colour).
+    let blocks: [(f32, f32, f32, Color); 9] = [
+        (1.0, 0.0, 8.0, core),
+        (7.0, 0.0, 6.0, core),
+        (12.0, 0.0, 5.0, mid),
+        (17.0, 0.0, 3.5, outer),
+        (5.0, 5.0, 4.5, mid),
+        (5.0, -5.0, 4.5, mid),
+        (10.0, 4.0, 3.0, outer),
+        (10.0, -4.0, 3.0, outer),
+        (3.0, 0.0, 11.0, mid),
+    ];
+    for (f, s, sz, col) in blocks {
+        let p = muzzle + fwd * (f * scale) + perp * (s * scale);
+        let jit = life * rng.gen_range(0.8..1.15);
+        commands.spawn((
+            Sprite::from_color(col, Vec2::splat(sz * scale)),
+            Transform {
+                translation: Vec3::new(p.x, p.y, Z_FX - 1.0),
+                rotation: Quat::from_rotation_z(angle),
+                ..default()
+            },
+            MuzzleFlash { life: jit, max: jit },
+        ));
+    }
+    // A few forward sparks flung from the barrel.
+    for _ in 0..(if big { 8 } else { 5 }) {
+        let a = angle + rng.gen_range(-0.35..0.35);
+        let sp = rng.gen_range(220.0..460.0) * scale;
+        let tip = muzzle + fwd * 6.0;
+        commands.spawn((
+            Sprite::from_color(
+                if rng.gen_bool(0.5) { mid } else { outer },
+                Vec2::splat(rng.gen_range(2.0..3.5)),
+            ),
+            Transform::from_xyz(tip.x, tip.y, Z_FX - 1.0),
+            Particle {
+                vel: Vec2::new(a.cos(), a.sin()) * sp,
+                life: rng.gen_range(0.08..0.16),
+                max_life: 0.16,
+                drag: 0.9,
+                gravity: 0.0,
+                base: outer,
+            },
+        ));
+    }
+}
+
+pub fn muzzle_flash_system(
     time: Res<Time>,
     mut commands: Commands,
-    mut q: Query<(Entity, &mut MuzzleLight, &mut Sprite)>,
+    mut q: Query<(Entity, &mut MuzzleFlash, &mut Sprite)>,
 ) {
     let dt = time.delta_secs();
     for (e, mut m, mut sprite) in q.iter_mut() {
@@ -57,12 +121,11 @@ pub fn muzzle_light_system(
             commands.entity(e).despawn();
             continue;
         }
-        let t = (m.life / m.max).clamp(0.0, 1.0);
-        // Flare out quickly then fade.
-        let s = m.size * (1.0 + (1.0 - t) * 0.5);
-        sprite.custom_size = Some(Vec2::splat(s));
-        let base = sprite.color.to_srgba();
-        sprite.color = Color::srgba(base.red, base.green, base.blue, t * 0.85);
+        // Two-step brightness so it reads as a hard flash, not a fade.
+        let t = m.life / m.max;
+        let a = if t > 0.5 { 1.0 } else { 0.7 };
+        let c = sprite.color.to_srgba();
+        sprite.color = Color::srgba(c.red, c.green, c.blue, a);
     }
 }
 
@@ -125,7 +188,6 @@ fn blood_burst(commands: &mut Commands, pos: Vec2, dir: f32, amount: u32) {
 pub fn firing_system(
     time: Res<Time>,
     input: Res<InputState>,
-    art: Res<crate::art::Art>,
     mut latch: ResMut<FireLatch>,
     mut shake: ResMut<Shake>,
     mut commands: Commands,
@@ -206,23 +268,8 @@ pub fn firing_system(
         ));
     }
 
-    // Muzzle flash that briefly lights the surrounding scene.
-    let flash_color = if w.explosive > 0.0 {
-        Color::srgba(1.0, 0.6, 0.25, 0.9)
-    } else {
-        Color::srgba(1.0, 0.85, 0.5, 0.85)
-    };
-    let flash_size = if w.explosive > 0.0 { 190.0 } else { 120.0 };
-    commands.spawn((
-        Sprite {
-            image: art.soft.clone(),
-            color: flash_color,
-            custom_size: Some(Vec2::splat(flash_size)),
-            ..default()
-        },
-        Transform::from_xyz(muzzle.x, muzzle.y, Z_FX - 1.0),
-        MuzzleLight { life: 0.09, max: 0.09, size: flash_size },
-    ));
+    // Pixelated muzzle flash: a blocky star of squares bursting from the tip.
+    spawn_muzzle_flash(&mut commands, muzzle, angle, w.explosive > 0.0, &mut rng);
 
     for _ in 0..w.pellets {
         let a = angle + rng.gen_range(-w.spread..w.spread);

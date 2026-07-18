@@ -42,12 +42,15 @@ fn main() {
         .init_resource::<combat::FireLatch>()
         .init_resource::<gear::PickupSpawner>()
         .init_resource::<hud::HurtFx>()
+        .init_resource::<Settings>()
         .add_event::<enemy::SpitEvent>()
         .add_event::<combat::Explosion>()
         .add_systems(Startup, (camera::setup_camera, art::setup_art))
-        // menu / gameover screens
+        // menu / options / gameover screens
         .add_systems(OnEnter(GameState::Menu), hud::setup_menu)
         .add_systems(OnExit(GameState::Menu), hud::teardown_menu)
+        .add_systems(OnEnter(GameState::Options), hud::setup_options)
+        .add_systems(OnExit(GameState::Options), hud::teardown_options)
         .add_systems(OnEnter(GameState::Playing), hud::start_game)
         .add_systems(OnEnter(GameState::GameOver), hud::setup_gameover)
         .add_systems(
@@ -56,7 +59,12 @@ fn main() {
         )
         .add_systems(
             Update,
-            hud::press_any_key.run_if(in_state(GameState::Menu).or(in_state(GameState::GameOver))),
+            hud::menu_buttons.run_if(in_state(GameState::Menu).or(in_state(GameState::Options))),
+        )
+        .add_systems(Update, hud::options_slider.run_if(in_state(GameState::Options)))
+        .add_systems(
+            Update,
+            hud::press_any_key.run_if(in_state(GameState::GameOver)),
         )
         // rig building runs in every state so freshly-spawned characters get visuals
         .add_systems(Update, art::build_rigs)
@@ -78,7 +86,7 @@ fn main() {
                 combat::particle_system,
                 combat::decal_system,
                 combat::zombie_death_system,
-                combat::muzzle_light_system,
+                combat::muzzle_flash_system,
                 gear::pickup_collect,
                 gear::pickup_spawn_over_time,
                 gear::pickup_icon_bob,
