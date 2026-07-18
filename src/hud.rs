@@ -478,6 +478,8 @@ pub fn start_game(
     let spawn = world.spawn;
     // Scatter starter gear before we hand the world to the ECS as a resource.
     crate::gear::scatter_pickups(&mut commands, &art, &world, spawn);
+    // Dress the arena: debris, blood pools, corpses, flies, flickering lights.
+    crate::ambient::scatter_ambient(&mut commands, &art, &world, spawn);
     commands.insert_resource(world);
 
     // Player.
@@ -493,6 +495,26 @@ pub fn start_game(
 }
 
 fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
+    // Fog of war: a dark radial vignette that keeps only the area around the
+    // player lit, so the streets fade into gloom at the edges of sight.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        ImageNode {
+            image: art.vignette.clone(),
+            color: Color::srgba(0.01, 0.01, 0.02, 0.92),
+            ..default()
+        },
+        GlobalZIndex(25),
+        Cleanup,
+    ));
+
     // Full-screen red damage vignette (transparent until the player is hit).
     commands.spawn((
         Node {

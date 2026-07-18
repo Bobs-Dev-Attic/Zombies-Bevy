@@ -148,6 +148,7 @@ pub fn gather_input(
         KeyCode::Digit5,
         KeyCode::Digit6,
         KeyCode::Digit7,
+        KeyCode::Digit8,
     ]
     .iter()
     .enumerate()

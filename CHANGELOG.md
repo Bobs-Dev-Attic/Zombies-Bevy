@@ -4,6 +4,35 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.13.0]
+
+### Added
+- **Side-by-side shotgun** — a new break-action double-barrel. It fires two fast
+  shells, then **breaks open on reload**: the barrels hinge down toward the
+  ground while the support hand feeds two fresh shells into the breech before it
+  snaps shut.
+- **Buckshot ricochets** — pump-shotgun and side-by-side pellets now **bounce off
+  walls** (losing bite on each bounce), like the other small calibres.
+- **Atmosphere / dressing** across the arena:
+  - **Debris and garbage** — crushed cans, scrap paper, rubble, gravel and grime
+    stains litter the streets.
+  - **Blood pools and corpses** — bodies laid out in pools of blood; some
+    **still twitch**, others have their **guts spread out** in a gory mess.
+  - **Flies** buzz erratically over the corpses and **scatter when you approach**.
+  - **Fog of war** — the streets fade into gloom beyond your immediate
+    surroundings.
+  - **Flickering lights** — failing street-lamp pools waver like dying bulbs.
+
+### Changed
+- **Pixelated gore trails** — crawlers' drag-smears and wounded walkers' bloody
+  footprints are now chunky pixel-art clusters instead of smooth smears.
+- **More varied zombies**:
+  - Some drag **one limp, bloodied leg** behind them (leaving a blood streak).
+  - Some trail **torn clothing** that flaps as they move.
+  - **Arm movement varies per zombie and per arm** — each arm blends between a
+    swing and a reaching grasp at its own rate and phase, so some swing one arm
+    while clawing forward with the other and no two shamble alike.
+
 ## [0.12.0]
 
 ### Added
