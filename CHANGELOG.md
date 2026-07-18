@@ -4,6 +4,14 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.14.2]
+
+### Fixed
+- **Knife no longer floats** — the blade is now pinned to the right hand (its
+  position and angle are derived from the arm and elbow so it stays gripped),
+  and the **left arm is hidden** while the knife is out, so it reads as clean
+  one-handed knife work. The right-arm slash/stab motion is unchanged.
+
 ## [0.14.1]
 
 ### Changed
