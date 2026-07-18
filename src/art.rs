@@ -181,8 +181,8 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     // Body pivot (rotates to face aim).
     let body = commands.spawn((Transform::default(), Visibility::default())).id();
 
-    // ---- Backpack (behind the torso, toward the back = -X). ----
-    let pack_base = commands.spawn(ellipse(art, pack, 19.0, 23.0, -0.35)).id();
+    // ---- Backpack (behind the torso, toward the back = -X). Blocky. ----
+    let pack_base = commands.spawn(rect(pack, 17.0, 23.0, -0.35)).id();
     commands.entity(pack_base).insert(Transform::from_xyz(-8.5, 0.0, -0.35));
     let pack_lid = commands.spawn(rect(pack_dark, 12.0, 9.0, -0.34)).id();
     commands.entity(pack_lid).insert(Transform::from_xyz(-10.0, 0.0, -0.34));
@@ -204,37 +204,65 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     let leg_l = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
     let leg_r = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
 
-    // ---- Torso with a highlight and a collar for depth ----
-    let torso = commands.spawn(ellipse(art, jacket, 23.0, 22.0, 0.0)).id();
-    let torso_hi = commands.spawn(ellipse(art, jacket_hi, 13.0, 15.0, 0.01)).id();
-    commands.entity(torso_hi).insert(Transform::from_xyz(4.0, 0.0, 0.01));
-    let collar = commands.spawn(ellipse(art, jacket_dark, 12.0, 13.0, 0.04)).id();
-    commands.entity(collar).insert(Transform::from_xyz(6.0, 0.0, 0.04));
-    let yoke = commands.spawn(ellipse(art, jacket_dark, 20.0, 16.0, 0.02)).id();
-    commands.entity(torso).add_children(&[torso_hi, collar]);
+    // ---- Torso built from blocky squares/rectangles (no ellipses) ----
+    // The main body block is `torso` (recoloured on hit); the rest are detail.
+    let torso = commands.spawn(rect(jacket, 20.0, 18.0, 0.0)).id();
+    let back_block = commands.spawn(rect(jacket_dark, 8.0, 18.0, -0.01)).id();
+    commands.entity(back_block).insert(Transform::from_xyz(-7.0, 0.0, -0.01));
+    let chest = commands.spawn(rect(jacket_hi, 11.0, 12.0, 0.02)).id();
+    commands.entity(chest).insert(Transform::from_xyz(3.0, 0.0, 0.02));
+    let shoulder_l = commands.spawn(rect(jacket_dark, 7.0, 7.0, 0.03)).id();
+    commands.entity(shoulder_l).insert(Transform::from_xyz(1.0, 8.0, 0.03));
+    let shoulder_r = commands.spawn(rect(jacket_dark, 7.0, 7.0, 0.03)).id();
+    commands.entity(shoulder_r).insert(Transform::from_xyz(1.0, -8.0, 0.03));
+    let collar = commands.spawn(rect(jacket_dark, 5.0, 10.0, 0.04)).id();
+    commands.entity(collar).insert(Transform::from_xyz(8.0, 0.0, 0.04));
+    commands
+        .entity(torso)
+        .add_children(&[back_block, chest, shoulder_l, shoulder_r, collar]);
 
-    // ---- Arms: sleeve + cuff + hand + ladder stitching, hands ride the arm ----
-    let build_arm = |commands: &mut Commands, len: f32| -> Entity {
-        let arm = commands.spawn(rect(jacket, len, 5.4, 0.1)).id();
-        let fwd = len * 0.5;
-        let cuff = commands.spawn(rect(jacket_dark, 3.0, 5.6, 0.11)).id();
-        commands.entity(cuff).insert(Transform::from_xyz(fwd - 2.0, 0.0, 0.11));
-        let hand = commands.spawn(ellipse(art, skin_dark, 5.5, 5.5, 0.13)).id();
-        commands.entity(hand).insert(Transform::from_xyz(fwd + 1.0, 0.0, 0.13));
-        // ladder stitching along the sleeve
-        let mut kids = vec![cuff, hand];
-        for k in 0..3 {
-            let s = commands.spawn(rect(stitch, 1.2, 4.6, 0.12)).id();
-            commands
-                .entity(s)
-                .insert(Transform::from_xyz(-fwd + 3.0 + k as f32 * 3.5, 0.0, 0.12));
-            kids.push(s);
-        }
-        commands.entity(arm).add_children(&kids);
-        arm
+    // ---- Arms: two rectangle segments hinged at a circular elbow, plus a
+    // circular hand. `bend` angles the forearm inward so both hands meet the
+    // gun. The returned entity is the shoulder pivot the animation drives. ----
+    let build_arm = |commands: &mut Commands, bend: f32| -> Entity {
+        let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
+        let l1 = 7.0; // upper arm
+        let l2 = 7.5; // forearm
+
+        let upper = commands.spawn(rect(jacket, l1, 5.4, 0.1)).id();
+        commands.entity(upper).insert(Transform::from_xyz(l1 * 0.5, 0.0, 0.1));
+        // Ladder stitching on the upper arm.
+        let st1 = commands.spawn(rect(stitch, 1.1, 4.4, 0.11)).id();
+        commands.entity(st1).insert(Transform::from_xyz(l1 * 0.4, 0.0, 0.11));
+        let st2 = commands.spawn(rect(stitch, 1.1, 4.4, 0.11)).id();
+        commands.entity(st2).insert(Transform::from_xyz(l1 * 0.7, 0.0, 0.11));
+        // Elbow joint — a circle.
+        let elbow = commands.spawn(ellipse(art, jacket_dark, 6.0, 6.0, 0.12)).id();
+        commands.entity(elbow).insert(Transform::from_xyz(l1, 0.0, 0.12));
+
+        // Forearm pivots at the elbow and bends inward.
+        let forearm_pivot = commands
+            .spawn((
+                Transform::from_xyz(l1, 0.0, 0.0).with_rotation(Quat::from_rotation_z(bend)),
+                Visibility::default(),
+            ))
+            .id();
+        let forearm = commands.spawn(rect(jacket, l2, 5.0, 0.1)).id();
+        commands.entity(forearm).insert(Transform::from_xyz(l2 * 0.5, 0.0, 0.1));
+        let cuff = commands.spawn(rect(jacket_dark, 2.6, 5.4, 0.11)).id();
+        commands.entity(cuff).insert(Transform::from_xyz(l2 - 1.0, 0.0, 0.11));
+        let hand = commands.spawn(ellipse(art, skin_dark, 5.6, 5.6, 0.13)).id();
+        commands.entity(hand).insert(Transform::from_xyz(l2 + 1.0, 0.0, 0.13));
+        commands.entity(forearm_pivot).add_children(&[forearm, cuff, hand]);
+
+        commands
+            .entity(pivot)
+            .add_children(&[upper, st1, st2, elbow, forearm_pivot]);
+        pivot
     };
-    let arm_l = build_arm(commands, 14.0);
-    let arm_r = build_arm(commands, 15.0);
+    // Right/gun arm bends up toward centre; left arm bends down toward centre.
+    let arm_l = build_arm(commands, -0.5);
+    let arm_r = build_arm(commands, 0.5);
 
     // ---- Head + padded hat ----
     let head = commands.spawn(ellipse(art, skin, 14.5, 14.5, 0.25)).id();
@@ -278,7 +306,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
 
     commands.entity(body).add_children(&[
         pack_base, pack_lid, pack_seam_v, pack_seam_h, buckle_a, buckle_b,
-        leg_l, leg_r, torso, yoke, strap_a, strap_b, arm_l, arm_r, weapon, head, flash,
+        leg_l, leg_r, torso, strap_a, strap_b, arm_l, arm_r, weapon, head, flash,
     ]);
 
     // Reload cycle indicator: a ring of ticks floating above the head. Child of
@@ -418,16 +446,18 @@ pub fn animate_player(
     let w = p.weapon();
     let melee = w.kind == WeaponKind::Melee;
     let recoil = p.recoil;
+    // Arms are shoulder pivots at the shoulders; the forearm bend (baked in)
+    // brings both hands onto the gun. We drive the shoulder position + rotation.
     if melee {
         // swing arc
         let sw = if p.swing_dur > 0.0 { p.swing_t / p.swing_dur } else { 0.0 };
         let swing = (1.0 - sw) * 1.4 - 0.7; // sweeps across
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(8.0, -4.0, 0.1);
+            a.translation = Vec3::new(4.5, -5.0, 0.1);
             a.rotation = Quat::from_rotation_z(swing);
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(6.0, 4.0, 0.1);
+            a.translation = Vec3::new(4.5, 5.0, 0.1);
             a.rotation = Quat::from_rotation_z(swing * 0.6);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
@@ -438,12 +468,12 @@ pub fn animate_player(
         // Two-handed pistol grip pushed out in front, recoiling backward on fire.
         let back = recoil * 5.0;
         if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(11.0 - back, -2.5, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.10);
+            a.translation = Vec3::new(4.5 - back, -5.0, 0.1);
+            a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(10.0 - back, 2.5, 0.1);
-            a.rotation = Quat::from_rotation_z(0.10);
+            a.translation = Vec3::new(4.5 - back, 5.0, 0.1);
+            a.rotation = Quat::IDENTITY;
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
             wt.translation = Vec3::new(18.0 - back, 0.0, 0.15);
