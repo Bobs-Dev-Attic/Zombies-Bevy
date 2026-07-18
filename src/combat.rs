@@ -252,20 +252,27 @@ pub fn firing_system(
     let muzzle = pos + Vec2::new(angle.cos(), angle.sin()) * muzzle_dist;
 
     if w.kind == WeaponKind::Melee {
-        p.swing_dur = 0.22;
+        // Alternate a wide slash and a forward stab on each strike. A stab lunges
+        // a touch further with a narrow forward arc; a slash sweeps a wide arc.
+        p.melee_stab = !p.melee_stab;
+        let stab = p.melee_stab;
+        p.swing_dur = if stab { 0.18 } else { 0.24 };
         p.swing_t = p.swing_dur;
-        // Arc melee: hit zombies in front within reach.
-        let reach = w.reach + p.r;
+        let reach = w.reach + p.r + if stab { 8.0 } else { 0.0 };
+        let window = if stab { 0.45 } else { 0.95 };
+        // A stab concentrates its force (more knockback, a hair more damage).
+        let dmg = if stab { w.damage * 1.1 } else { w.damage };
+        let knock = if stab { w.knockback * 1.3 } else { w.knockback };
         for (mut z, ztf) in zombies.iter_mut() {
             let zp = ztf.translation.truncate();
             let d = zp - pos;
             if d.length() < reach + z.r {
                 let ad = (d.y.atan2(d.x) - angle).rem_euclid(TAU);
                 let ad = if ad > std::f32::consts::PI { ad - TAU } else { ad };
-                if ad.abs() < 0.9 {
-                    z.hp -= w.damage;
+                if ad.abs() < window {
+                    z.hp -= dmg;
                     z.hurt_flash = 0.1;
-                    z.apply_knockback(d.y.atan2(d.x), w.knockback);
+                    z.apply_knockback(d.y.atan2(d.x), knock);
                     blood_burst(&mut commands, zp, d.y.atan2(d.x), 6);
                 }
             }

@@ -4,6 +4,15 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.14.1]
+
+### Changed
+- **Knife stance & attacks reworked** — the knife hand is now cocked **out to the
+  right**, and the left arm hangs **low with the hand tucked by the waist**.
+  Attacks alternate between a wide **slash** (the blade sweeps across the chest)
+  and a forward **stab** (the blade thrusts straight out along the aim); the stab
+  lunges a little further and hits a narrow arc, the slash covers a wide arc.
+
 ## [0.14.0]
 
 ### Added
