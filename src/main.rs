@@ -1,3 +1,4 @@
+mod ambient;
 mod art;
 mod camera;
 mod combat;
@@ -121,6 +122,16 @@ fn main() {
                 art::update_gear_visuals,
             )
                 .after(player::player_update)
+                .run_if(in_state(GameState::Playing)),
+        )
+        // ambient atmosphere: flies, twitching corpses, flickering lights
+        .add_systems(
+            Update,
+            (
+                ambient::fly_system,
+                ambient::twitch_system,
+                ambient::flicker_system,
+            )
                 .run_if(in_state(GameState::Playing)),
         )
         .run();

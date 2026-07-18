@@ -53,6 +53,8 @@ pub struct WeaponVisuals {
     pub pistol_mag: Entity,
     pub shotgun_pump: Entity,
     pub rifle_mag: Entity,
+    /// The side-by-side's break-action barrel pivot (hinges open on reload).
+    pub sxs_barrel: Entity,
 }
 
 /// The player's two forearm (elbow) pivots, so poses can bend the arms — e.g.
@@ -73,6 +75,7 @@ pub struct ZombieLimbs {
     pub fore_r: Entity, // right elbow pivot
     pub shin_l: Entity, // left knee pivot
     pub shin_r: Entity, // right knee pivot
+    pub tatters: Option<Entity>, // torn clothing dragging behind (swayed each frame)
 }
 
 const RELOAD_TICKS: usize = 14;
@@ -558,7 +561,42 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         group(commands, vec![rear, tube, sight, grip])
     };
 
-    let weapon_roots = [melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g];
+    // Side-by-side: twin barrels on a break-action hinge. `sxs_barrel` is the
+    // pivot holding the two barrels + fore-end; it hinges open (rotates) on a
+    // reload so the muzzles drop and two fresh shells go in. The stock/receiver
+    // stay fixed. The hinge sits near the receiver (x≈2).
+    let sxs_barrel = commands
+        .spawn((Transform::from_xyz(2.0, 0.0, 0.0), Visibility::default()))
+        .id();
+    {
+        // Two parallel barrels running forward from the hinge.
+        let bl = part(commands, gun, 22.0, 2.6, 11.0, 2.1);
+        let br = part(commands, gun, 22.0, 2.6, 11.0, -2.1);
+        // Fore-end (wood) hugging the barrels.
+        let fore = commands
+            .spawn((
+                Sprite::from_color(wood, Vec2::new(8.0, 6.5)),
+                Transform::from_xyz(8.0, 0.0, 0.14),
+            ))
+            .id();
+        commands.entity(sxs_barrel).add_children(&[fore, bl, br]);
+    }
+    let sxs_g = {
+        let receiver = part(commands, gun_dark, 6.0, 7.0, 1.5, 0.0);
+        // Angled wooden stock back to the shoulder.
+        let stock = commands
+            .spawn((
+                Sprite::from_color(wood, Vec2::new(11.0, 4.5)),
+                Transform::from_xyz(-3.0, -3.5, 0.15).with_rotation(Quat::from_rotation_z(0.5)),
+            ))
+            .id();
+        let grip = part(commands, gun_dark, 4.0, 5.0, -1.0, -5.0);
+        group(commands, vec![stock, grip, receiver, sxs_barrel])
+    };
+
+    let weapon_roots = [
+        melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g, sxs_g,
+    ];
     commands.entity(weapon).add_children(&weapon_roots);
 
     // Small square flash at the barrel tip (pixelated, not a soft glow).
@@ -618,6 +656,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         pistol_mag,
         shotgun_pump,
         rifle_mag,
+        sxs_barrel,
     });
     commands.entity(root).insert(PlayerArms { fore_l, fore_r });
 }
@@ -759,6 +798,22 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         extras.push(bn);
     }
 
+    // ---- Torn clothing dragging behind (a couple of ragged strips off the
+    // back that flap as the zombie moves). ----
+    let tatters = if look.tatters {
+        let rag = darker(look.shirt, 0.65);
+        let root = commands.spawn((Transform::default(), Visibility::default())).id();
+        let strip_a = commands.spawn(rect(rag, 10.0 * s, 3.5 * s, -0.02)).id();
+        commands.entity(strip_a).insert(Transform::from_xyz(-11.0 * s, 2.5 * s, -0.02));
+        let strip_b = commands.spawn(rect(darker(rag, 0.85), 8.0 * s, 3.0 * s, -0.02)).id();
+        commands.entity(strip_b).insert(Transform::from_xyz(-10.0 * s, -2.5 * s, -0.02));
+        commands.entity(root).add_children(&[strip_a, strip_b]);
+        commands.entity(body).add_child(root);
+        Some(root)
+    } else {
+        None
+    };
+
     // ---- Head + hair. ----
     let head = commands.spawn(ellipse(art, look.skin, 13.0 * s, 13.0 * s, 0.25)).id();
     if look.hair >= 0 {
@@ -796,6 +851,7 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         fore_r,
         shin_l,
         shin_r,
+        tatters,
     });
 }
 
@@ -979,6 +1035,28 @@ pub fn animate_player(
             wt.translation = Vec3::new(12.0 - back, 0.0, 0.15);
             wt.rotation = Quat::IDENTITY;
         }
+    } else if w.kind == WeaponKind::Sxs {
+        // Shouldered side-by-side. Held level to fire; on a reload the action
+        // breaks open — the barrels hinge down to point at the ground while the
+        // support hand feeds two fresh shells into the breech, then it snaps shut.
+        let back = recoil * 2.3;
+        let open = if reloading { (rl * std::f32::consts::PI).sin() } else { 0.0 };
+        // Support/left hand: on the fore-end when closed, dropping to the open
+        // breech to load shells.
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+            a.translation = Vec3::new(1.0 - open * 3.0, 7.5 - open * 3.5, 0.1);
+            a.rotation = Quat::from_rotation_z(0.31 - open * 0.55);
+        }
+        // Right/trigger hand cocked back at the grip.
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+            a.translation = Vec3::new(1.0 - back, -7.5, 0.1);
+            a.rotation = Quat::from_rotation_z(-1.05);
+        }
+        if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
+            // Level when firing; the whole gun tips down as it breaks open.
+            wt.translation = Vec3::new(12.0 - back, -open * 4.0, 0.15);
+            wt.rotation = Quat::from_rotation_z(-open * 0.5);
+        }
     } else {
         // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
         // fire. On a reload the left hand keeps the gun steady while the right
@@ -1004,7 +1082,7 @@ pub fn animate_player(
     // Forearm (elbow) bends. Default to the baked resting bend; the shotgun folds
     // the elbows for its pump/trigger, and a mag-fed reload folds the right elbow
     // down so the hand reaches the magazine well under the grip.
-    let (fore_bend_l, mut fore_bend_r) = if w.kind == WeaponKind::Shotgun {
+    let (fore_bend_l, mut fore_bend_r) = if matches!(w.kind, WeaponKind::Shotgun | WeaponKind::Sxs) {
         (-1.26, 2.36)
     } else {
         (-0.42, 0.42)
@@ -1023,6 +1101,16 @@ pub fn animate_player(
     if let Ok(mut pt) = tf_q.get_mut(wv.shotgun_pump) {
         let pump = recoil.max(rack);
         pt.translation.x = 9.0 - 6.0 * pump;
+    }
+
+    // Side-by-side barrels hinge open on a reload (break action), then snap shut.
+    if let Ok(mut bt) = tf_q.get_mut(wv.sxs_barrel) {
+        let open = if reloading && w.kind == WeaponKind::Sxs {
+            (rl * std::f32::consts::PI).sin()
+        } else {
+            0.0
+        };
+        bt.rotation = Quat::from_rotation_z(-open * 0.9);
     }
 
     // Recoil kick: the head and upper body rock back a touch when firing.
@@ -1077,6 +1165,7 @@ pub fn animate_player(
         WeaponKind::Rifle => (50.0, 12.0),
         WeaponKind::Smg => (42.0, 7.0),
         WeaponKind::Shotgun => (37.0, 8.0),
+        WeaponKind::Sxs => (36.0, 9.0),
         WeaponKind::Launcher => (50.0, 11.0),
         _ => (39.0, 6.0), // pistol
     };
@@ -1229,24 +1318,46 @@ pub fn animate_zombies(
             set_bend(&mut tf_q, limbs.shin_l, -(0.18 + 0.32 * (-stride).max(0.0)));
             set_bend(&mut tf_q, limbs.shin_r, -(0.18 + 0.32 * stride.max(0.0)));
 
-            // Arms either swing fore/aft or reach out toward the player, varied
-            // per zombie (reach_style 0 = swing, ~1 = outstretched grasping). The
-            // shoulder swings and the elbow bends, so both segments articulate.
-            let rs = z.reach_style;
-            let lerp = |a: f32, b: f32| a + (b - a) * rs;
-            let swing = (z.frame * 1.3).sin() * 0.32 * z.arm_amp;
-            let grasp = (z.frame * 2.4).sin() * 0.14; // twitchy grasp when reaching
+            // A dragged leg doesn't stride: it trails stiff and splayed behind,
+            // scraping along (the gore-trail system smears blood from it).
+            if z.look.drag_leg == 0 {
+                if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
+                    l.translation.x = -6.0 * s;
+                    l.translation.y = 6.0 * s;
+                    l.rotation = Quat::from_rotation_z(0.4);
+                }
+                set_bend(&mut tf_q, limbs.shin_l, 0.15);
+            } else if z.look.drag_leg == 1 {
+                if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
+                    r.translation.x = -6.0 * s;
+                    r.translation.y = -6.0 * s;
+                    r.rotation = Quat::from_rotation_z(-0.4);
+                }
+                set_bend(&mut tf_q, limbs.shin_r, -0.15);
+            }
+
+            // Arms vary per zombie AND per arm: each arm blends between a
+            // fore/aft swing and an outstretched grasp by its own reach amount,
+            // at the zombie's own frequency + phase, and the two arms run in
+            // opposite phase — so no two shamble alike and some swing one arm
+            // while clawing forward with the other.
+            let f = z.frame * z.arm_freq;
+            let swing_l = (f + z.arm_phase).sin() * 0.32 * z.arm_amp;
+            let swing_r = (f + z.arm_phase + std::f32::consts::PI).sin() * 0.32 * z.arm_amp;
+            let grasp = (z.frame * 2.4 + z.arm_phase).sin() * 0.14; // twitchy reach
+            let ll = |a: f32, b: f32| a + (b - a) * z.reach_l;
+            let lr = |a: f32, b: f32| a + (b - a) * z.reach_r;
             if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
                 a.translation = Vec3::new(3.0 * s, 6.0 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(lerp(0.35 + swing, -0.12 + grasp));
+                a.rotation = Quat::from_rotation_z(ll(0.35 + swing_l, -0.12 + grasp));
             }
             if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
                 a.translation = Vec3::new(3.0 * s, -6.0 * s, 0.1);
-                a.rotation = Quat::from_rotation_z(lerp(-0.35 - swing, 0.12 - grasp));
+                a.rotation = Quat::from_rotation_z(lr(-0.35 + swing_r, 0.12 - grasp));
             }
             // Elbows fold in when shambling, straighten out when reaching.
-            set_bend(&mut tf_q, limbs.fore_l, lerp(-0.85 - swing * 0.4, -0.2));
-            set_bend(&mut tf_q, limbs.fore_r, lerp(0.85 + swing * 0.4, 0.2));
+            set_bend(&mut tf_q, limbs.fore_l, ll(-0.85 - swing_l * 0.4, -0.2));
+            set_bend(&mut tf_q, limbs.fore_r, lr(0.85 + swing_r * 0.4, 0.2));
 
             if let Ok(mut h) = tf_q.get_mut(rig.head) {
                 h.translation.x = 4.0 * s;
@@ -1256,6 +1367,12 @@ pub fn animate_zombies(
                     0.0
                 };
             }
+        }
+
+        // Torn clothing flaps behind: a gentle sway, stronger while moving.
+        if let Some(t) = limbs.tatters {
+            let flap = (z.frame * 2.0).sin() * if moving { 0.5 } else { 0.12 };
+            set_bend(&mut tf_q, t, flap);
         }
 
         // Hurt flash + low-hp darkening.

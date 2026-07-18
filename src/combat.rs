@@ -241,6 +241,7 @@ pub fn firing_system(
         WeaponKind::Rifle => (50.0, 1.5),
         WeaponKind::Smg => (42.0, 1.0),
         WeaponKind::Shotgun => (37.0, 1.15),
+        WeaponKind::Sxs => (36.0, 1.25),
         WeaponKind::Launcher => (50.0, 1.8),
         _ => (34.0, 1.0), // pistol
     };

@@ -6,6 +6,7 @@ pub enum WeaponKind {
     Shotgun,
     Rifle,
     Launcher,
+    Sxs, // side-by-side (break-action) shotgun
 }
 
 impl WeaponKind {
@@ -18,12 +19,13 @@ impl WeaponKind {
             WeaponKind::Shotgun => 3,
             WeaponKind::Rifle => 4,
             WeaponKind::Launcher => 5,
+            WeaponKind::Sxs => 6,
         }
     }
 }
 
 /// Number of distinct weapon-kind visual slots.
-pub const WEAPON_KINDS: usize = 6;
+pub const WEAPON_KINDS: usize = 7;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Ammo {
@@ -166,10 +168,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 0.0,
         ammo: Ammo::Shells,
         reach: 0.0,
-        ricochet: 0,
+        ricochet: 1,
         pierce: 0,
         wall_pierce: 0,
-        falloff: 1.0,
+        falloff: 0.7,
     },
     Weapon {
         name: "Assault Rifle",
@@ -214,6 +216,29 @@ pub const WEAPONS: &[Weapon] = &[
         pierce: 0,
         wall_pierce: 0,
         falloff: 1.0,
+    },
+    Weapon {
+        name: "Side-by-Side",
+        kind: WeaponKind::Sxs,
+        damage: 17.0,
+        rate: 2.6,
+        auto: false,
+        clip: 2,
+        reload: 1.9,
+        pellets: 9,
+        spread: 0.24,
+        range: 300.0,
+        speed: 800.0,
+        knockback: 180.0,
+        sever: 0.18,
+        explosive: 0.0,
+        ammo: Ammo::Shells,
+        reach: 0.0,
+        // Buckshot ricochets off walls, losing bite on each bounce.
+        ricochet: 1,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 0.7,
     },
 ];
 

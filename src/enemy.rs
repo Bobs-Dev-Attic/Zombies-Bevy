@@ -55,8 +55,10 @@ pub struct Look {
     pub size: f32,        // overall build multiplier (proportions like the player)
     pub missing_arm: i8,  // -1 none, 0 left, 1 right
     pub missing_leg: i8,  // -1 none, 0 left, 1 right
+    pub drag_leg: i8,     // -1 none, 0 left, 1 right — a limp leg dragged behind
     pub crawler: bool,    // drags itself along the ground
     pub gash: bool,       // a bloody wound/exposed rib on the torso
+    pub tatters: bool,    // torn clothing dragging behind
 }
 
 fn jitter(rng: &mut impl Rng, c: [f32; 3], amt: f32) -> Color {
@@ -102,6 +104,12 @@ pub fn make_look(kind: ZKind, rng: &mut impl Rng) -> Look {
         -1
     };
     let missing_arm = if rng.gen_bool(0.12) { rng.gen_range(0..2) } else { -1 };
+    // An intact-legged walker may instead drag one limp, bloodied leg behind it.
+    let drag_leg = if !crawler && missing_leg < 0 && rng.gen_bool(0.16) {
+        rng.gen_range(0..2)
+    } else {
+        -1
+    };
 
     Look {
         skin: jitter(rng, skin_base, 0.05),
@@ -112,8 +120,10 @@ pub fn make_look(kind: ZKind, rng: &mut impl Rng) -> Look {
         size,
         missing_arm,
         missing_leg,
+        drag_leg,
         crawler,
         gash: rng.gen_bool(0.3),
+        tatters: rng.gen_bool(0.35),
     }
 }
 
@@ -152,10 +162,14 @@ pub struct Zombie {
     pub gait_t: f32,
     pub stride_rate: f32,
     pub arm_amp: f32,    // per-zombie arm-swing amplitude
+    pub arm_freq: f32,   // per-zombie arm-swing frequency
+    pub arm_phase: f32,  // phase offset so arms don't move in lockstep
     pub turn_rate: f32,  // per-zombie turn responsiveness (turning radius)
     pub trail_t: f32,    // countdown to the next blood mark
     pub foot: i8,        // which foot leaves the next print
     pub reach_style: f32, // 0 = swing arms, 1 = reach out toward the player
+    pub reach_l: f32,     // per-arm reach amount (left), 0 swing .. 1 reach
+    pub reach_r: f32,     // per-arm reach amount (right)
 
     pub look: Look,
     pub dead: bool,
@@ -175,9 +189,17 @@ impl Zombie {
         if look.missing_leg >= 0 {
             speed *= 0.72;
         }
+        if look.drag_leg >= 0 {
+            speed *= 0.7;
+        }
         if look.missing_arm >= 0 {
             speed *= 0.95;
         }
+        // Per-arm reach variety: a base tendency, then each arm offset so some
+        // zombies swing one arm while grasping with the other.
+        let base_reach: f32 = if rng.gen_bool(0.4) { rng.gen_range(0.55..1.0) } else { 0.0 };
+        let reach_l = (base_reach + rng.gen_range(-0.35..0.35)).clamp(0.0, 1.0);
+        let reach_r = (base_reach + rng.gen_range(-0.35..0.35)).clamp(0.0, 1.0);
         Self {
             kind,
             hp: d.hp * hp_scale,
@@ -210,11 +232,15 @@ impl Zombie {
             gait_t: rng.gen_range(0.0..6.0),
             stride_rate: rng.gen_range(0.8..1.35),
             arm_amp: rng.gen_range(0.55..1.5),
+            arm_freq: rng.gen_range(0.9..1.9),
+            arm_phase: rng.gen_range(0.0..TAU),
             turn_rate: rng.gen_range(3.0..7.5),
             trail_t: rng.gen_range(0.0..0.5),
             foot: 1,
             // Most shamble with swinging arms; some hold their arms out reaching.
-            reach_style: if rng.gen_bool(0.4) { rng.gen_range(0.6..1.0) } else { 0.0 },
+            reach_style: base_reach,
+            reach_l,
+            reach_r,
             look,
             dead: false,
         }
@@ -538,8 +564,38 @@ pub fn zombie_separation(
     }
 }
 
-/// Bleeding zombies leave marks on the ground: crawlers smear a continuous
-/// trail, walkers stamp the occasional bloody footprint (alternating feet).
+/// Stamp a pixelated blood mark: a little cluster of small square blocks in
+/// varied dark-red shades, so trails and footprints read as chunky pixel-art.
+fn pixel_blood(
+    commands: &mut Commands,
+    center: Vec2,
+    spread: Vec2,
+    blocks: u32,
+    life: f32,
+    rng: &mut impl Rng,
+) {
+    for _ in 0..blocks {
+        let off = Vec2::new(
+            rng.gen_range(-spread.x..spread.x),
+            rng.gen_range(-spread.y..spread.y),
+        );
+        let shade = rng.gen_range(0.22..0.40);
+        let sz: f32 = rng.gen_range(2.0..4.0);
+        let sz = sz.round();
+        commands.spawn((
+            Sprite {
+                color: Color::srgba(shade, 0.02, 0.03, rng.gen_range(0.5..0.75)),
+                custom_size: Some(Vec2::splat(sz)),
+                ..default()
+            },
+            Transform::from_xyz(center.x + off.x, center.y + off.y, Z_DECAL + rng.gen_range(0.1..0.4)),
+            crate::combat::Decal { life },
+        ));
+    }
+}
+
+/// Bleeding zombies leave pixelated marks on the ground: crawlers and leg-
+/// draggers smear a continuous trail, wounded walkers stamp bloody footprints.
 pub fn zombie_gore_trail(
     time: Res<Time>,
     mut commands: Commands,
@@ -555,43 +611,26 @@ pub fn zombie_gore_trail(
         }
         let pos = tf.translation.truncate();
         let angle = z.angle;
+        let fwd = Vec2::new(angle.cos(), angle.sin());
+        let perp = Vec2::new(-angle.sin(), angle.cos());
         let wounded = z.hp < z.max_hp * 0.85;
         if z.look.crawler {
-            // A dragging smear right under the belly.
+            // A dragging smear right under the belly (pixelated blocks).
             z.trail_t = rng.gen_range(0.05..0.12);
-            let back = pos - Vec2::new(angle.cos(), angle.sin()) * z.r * 0.5;
-            commands.spawn((
-                Sprite {
-                    color: Color::srgba(0.34, 0.02, 0.03, 0.6),
-                    custom_size: Some(Vec2::new(z.r * 1.4, z.r * 0.9)),
-                    ..default()
-                },
-                Transform {
-                    translation: Vec3::new(back.x, back.y, Z_DECAL + 0.2),
-                    rotation: Quat::from_rotation_z(angle),
-                    ..default()
-                },
-                crate::combat::Decal { life: 10.0 },
-            ));
+            let back = pos - fwd * z.r * 0.5;
+            pixel_blood(&mut commands, back, Vec2::new(z.r * 0.6, z.r * 0.4), 5, 10.0, &mut rng);
+        } else if z.look.drag_leg >= 0 {
+            // The dragged leg smears a near-continuous blood streak on its side.
+            z.trail_t = rng.gen_range(0.08..0.16);
+            let side = if z.look.drag_leg == 0 { 1.0 } else { -1.0 };
+            let at = pos + perp * z.r * 0.4 * side - fwd * z.r * 0.3;
+            pixel_blood(&mut commands, at, Vec2::new(z.r * 0.35, z.r * 0.28), 4, 9.0, &mut rng);
         } else if wounded {
             // Bloody footprint, offset to the current foot's side.
             z.trail_t = rng.gen_range(0.28..0.45);
             z.foot = -z.foot;
-            let perp = Vec2::new(-angle.sin(), angle.cos()) * z.r * 0.35 * z.foot as f32;
-            let at = pos + perp;
-            commands.spawn((
-                Sprite {
-                    color: Color::srgba(0.30, 0.02, 0.03, 0.55),
-                    custom_size: Some(Vec2::new(z.r * 0.5, z.r * 0.32)),
-                    ..default()
-                },
-                Transform {
-                    translation: Vec3::new(at.x, at.y, Z_DECAL + 0.2),
-                    rotation: Quat::from_rotation_z(angle),
-                    ..default()
-                },
-                crate::combat::Decal { life: 8.0 },
-            ));
+            let at = pos + perp * z.r * 0.35 * z.foot as f32;
+            pixel_blood(&mut commands, at, Vec2::new(z.r * 0.22, z.r * 0.16), 3, 8.0, &mut rng);
         } else {
             z.trail_t = rng.gen_range(0.4..0.8);
         }
