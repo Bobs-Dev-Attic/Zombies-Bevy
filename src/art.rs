@@ -51,6 +51,7 @@ pub struct WeaponVisuals {
     pub roots: [Entity; crate::weapons::WEAPON_KINDS],
     pub pistol_slide: Entity,
     pub pistol_mag: Entity,
+    pub shotgun_pump: Entity,
 }
 
 const RELOAD_TICKS: usize = 14;
@@ -497,13 +498,13 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         group(commands, vec![stock, body, grip, mag, barrel])
     };
 
-    // Shotgun: long barrel, pump, wood stock.
+    // Shotgun: long barrel, sliding pump, wood stock.
+    let shotgun_pump = part(commands, gun_dark, 6.0, 5.5, 10.0, -1.0);
     let shotgun_g = {
         let barrel = part(commands, gun, 22.0, 4.0, 12.0, 0.0);
-        let pump = part(commands, gun_dark, 6.0, 5.5, 10.0, -1.0);
         let stock = part(commands, wood, 9.0, 5.0, -3.5, 0.0);
         let grip = part(commands, gun_dark, 4.0, 5.0, 1.0, -3.5);
-        group(commands, vec![stock, grip, barrel, pump])
+        group(commands, vec![stock, grip, barrel, shotgun_pump])
     };
 
     // Assault rifle: long body, curved mag, thin barrel, stock, pistol grip.
@@ -583,49 +584,117 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         roots: weapon_roots,
         pistol_slide,
         pistol_mag,
+        shotgun_pump,
     });
 }
 
 fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie) {
     let look = z.look;
-    let scale = z.r / 12.0;
+    let s = z.r / 12.0;
+    let crawler = look.crawler;
+    let bone = Color::srgb(0.86, 0.83, 0.74);
+    let blood = Color::srgb(0.35, 0.03, 0.04);
+    let darker = |c: Color, f: f32| {
+        let c = c.to_srgba();
+        Color::srgb(c.red * f, c.green * f, c.blue * f)
+    };
 
+    // Contact shadow — flatter and longer for a body dragging on the ground.
+    let (shw, shh) = if crawler { (42.0, 18.0) } else { (34.0, 24.0) };
     let shadow = commands
         .spawn((
             Sprite {
                 image: art.soft.clone(),
                 color: Color::srgba(0.0, 0.0, 0.0, 0.32),
-                custom_size: Some(Vec2::new(36.0 * scale, 24.0 * scale)),
+                custom_size: Some(Vec2::new(shw * s, shh * s)),
                 ..default()
             },
-            Transform::from_xyz(1.0 * scale, -5.0 * scale, -0.5),
+            Transform::from_xyz(1.0 * s, -5.0 * s, -0.5),
         ))
         .id();
 
     let body = commands.spawn((Transform::default(), Visibility::default())).id();
+    let mut extras: Vec<Entity> = Vec::new();
 
-    let leg_l = commands.spawn(rect(look.pants, 8.0 * scale, 6.0 * scale, -0.2)).id();
-    let leg_r = commands.spawn(rect(look.pants, 8.0 * scale, 6.0 * scale, -0.2)).id();
-    let torso = commands.spawn(ellipse(art, look.shirt, 22.0 * scale, 20.0 * scale, 0.0)).id();
-    let arm_l = commands.spawn(rect(look.shirt, 13.0 * scale, 5.0 * scale, 0.1)).id();
-    let arm_r = commands.spawn(rect(look.shirt, 13.0 * scale, 5.0 * scale, 0.1)).id();
-    let head = commands.spawn(ellipse(art, look.skin, 15.0 * scale, 15.0 * scale, 0.25)).id();
-    let hair_e = if look.hair >= 0 {
-        let hh = if look.hair == 1 { 15.0 } else { 12.0 };
-        Some(commands.spawn(ellipse(art, look.hair_col, 15.0 * scale, hh * scale, 0.26)).id())
-    } else {
-        None
+    // ---- Legs (player-like proportions). A missing leg is hidden and replaced
+    // by a short bloody stump with a nub of bone. ----
+    let leg_l = commands.spawn(rect(look.pants, 8.0 * s, 5.5 * s, -0.2)).id();
+    let leg_r = commands.spawn(rect(look.pants, 8.0 * s, 5.5 * s, -0.2)).id();
+    let mut stump = |commands: &mut Commands, x: f32, y: f32| {
+        let st = commands.spawn(rect(look.skin, 4.0 * s, 5.0 * s, -0.19)).id();
+        commands.entity(st).insert(Transform::from_xyz(x, y, -0.19));
+        let bl = commands.spawn(rect(blood, 3.5 * s, 4.0 * s, -0.185)).id();
+        commands.entity(bl).insert(Transform::from_xyz(x + 1.0 * s, y, -0.185));
+        let bn = commands.spawn(rect(bone, 1.8 * s, 1.8 * s, -0.18)).id();
+        commands.entity(bn).insert(Transform::from_xyz(x + 2.0 * s, y, -0.18));
+        extras.push(st);
+        extras.push(bl);
+        extras.push(bn);
     };
+    if look.missing_leg == 0 {
+        commands.entity(leg_l).insert(Visibility::Hidden);
+        stump(commands, -2.0 * s, 5.0 * s);
+    } else if look.missing_leg == 1 {
+        commands.entity(leg_r).insert(Visibility::Hidden);
+        stump(commands, -2.0 * s, -5.0 * s);
+    }
+
+    // ---- Torso (rounded, like the player) with an optional bloody gash/ribs. ----
+    let torso = commands.spawn(rrect(art, look.shirt, 20.0 * s, 16.0 * s, 0.0)).id();
+    let back = commands.spawn(rrect(art, darker(look.shirt, 0.7), 10.0 * s, 15.0 * s, -0.01)).id();
+    commands.entity(back).insert(Transform::from_xyz(-5.0 * s, 0.0, -0.01));
+    commands.entity(torso).add_child(back);
+    if look.gash {
+        let wound = commands.spawn(rect(blood, 6.0 * s, 7.0 * s, 0.03)).id();
+        commands.entity(wound).insert(Transform::from_xyz(2.0 * s, 1.5 * s, 0.03));
+        let rib1 = commands.spawn(rect(bone, 5.0 * s, 1.1 * s, 0.04)).id();
+        commands.entity(rib1).insert(Transform::from_xyz(2.0 * s, 0.5 * s, 0.04));
+        let rib2 = commands.spawn(rect(bone, 5.0 * s, 1.1 * s, 0.04)).id();
+        commands.entity(rib2).insert(Transform::from_xyz(2.0 * s, 3.0 * s, 0.04));
+        commands.entity(torso).add_children(&[wound, rib1, rib2]);
+    }
+
+    // ---- Arms (bare skin, longer + thinner than the torso). A missing arm is
+    // hidden and replaced by a stump + bone. ----
+    let arm_l = commands.spawn(rect(look.skin, 13.0 * s, 4.5 * s, 0.1)).id();
+    let arm_r = commands.spawn(rect(look.skin, 13.0 * s, 4.5 * s, 0.1)).id();
+    if look.missing_arm == 0 {
+        commands.entity(arm_l).insert(Visibility::Hidden);
+        let st = commands.spawn(rect(look.skin, 4.0 * s, 4.5 * s, 0.11)).id();
+        commands.entity(st).insert(Transform::from_xyz(4.0 * s, 5.0 * s, 0.11));
+        let bn = commands.spawn(rect(bone, 1.6 * s, 1.6 * s, 0.12)).id();
+        commands.entity(bn).insert(Transform::from_xyz(6.0 * s, 5.0 * s, 0.12));
+        extras.push(st);
+        extras.push(bn);
+    } else if look.missing_arm == 1 {
+        commands.entity(arm_r).insert(Visibility::Hidden);
+        let st = commands.spawn(rect(look.skin, 4.0 * s, 4.5 * s, 0.11)).id();
+        commands.entity(st).insert(Transform::from_xyz(4.0 * s, -5.0 * s, 0.11));
+        let bn = commands.spawn(rect(bone, 1.6 * s, 1.6 * s, 0.12)).id();
+        commands.entity(bn).insert(Transform::from_xyz(6.0 * s, -5.0 * s, 0.12));
+        extras.push(st);
+        extras.push(bn);
+    }
+
+    // ---- Head + hair. ----
+    let head = commands.spawn(ellipse(art, look.skin, 13.0 * s, 13.0 * s, 0.25)).id();
+    if look.hair >= 0 {
+        let hh = if look.hair == 1 { 13.0 } else { 10.5 };
+        let h = commands.spawn(ellipse(art, look.hair_col, 13.0 * s, hh * s, 0.24)).id();
+        commands.entity(h).insert(Transform::from_xyz(-2.0 * s, 0.0, 0.24));
+        commands.entity(head).add_child(h);
+    }
+
     // placeholders so Rig fields are populated
     let weapon = commands.spawn((Transform::default(), Visibility::Hidden)).id();
     let flash = commands.spawn((Transform::default(), Visibility::Hidden)).id();
 
-    if let Some(h) = hair_e {
-        commands.entity(head).add_child(h);
-    }
     commands
         .entity(body)
         .add_children(&[leg_l, leg_r, torso, arm_l, arm_r, head]);
+    if !extras.is_empty() {
+        commands.entity(body).add_children(&extras);
+    }
     commands.entity(root).add_children(&[shadow, body, weapon, flash]);
     commands.entity(root).insert(Rig {
         body,
@@ -795,6 +864,25 @@ pub fn animate_player(
             wt.translation = Vec3::new(12.0, -3.0, 0.15);
             wt.rotation = Quat::from_rotation_z(swing);
         }
+    } else if w.kind == WeaponKind::Shotgun {
+        // Pump shotgun is fired from the hip: held low across the waist and
+        // angled, one hand on the grip at the hip and the other working the pump.
+        let back = recoil * 4.0;
+        // The support hand works the pump (slides fore/aft as it's racked).
+        let pump = recoil.max(rack);
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+            a.translation = Vec3::new(9.0 - pump * 4.0, 3.0, 0.1);
+            a.rotation = Quat::from_rotation_z(0.25);
+        }
+        if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+            a.translation = Vec3::new(0.0 - back, -8.0, 0.1);
+            a.rotation = Quat::from_rotation_z(-0.28);
+        }
+        if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
+            // Low at the waist, barrel angled across the body.
+            wt.translation = Vec3::new(16.0 - back, -6.0, 0.15);
+            wt.rotation = Quat::from_rotation_z(-0.34);
+        }
     } else {
         // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
         // fire and dipping while reloading.
@@ -814,6 +902,12 @@ pub fn animate_player(
             wt.translation = Vec3::new(24.0 - back, -2.0 * swap, 0.15);
             wt.rotation = Quat::from_rotation_z(-0.28 * swap);
         }
+    }
+
+    // Shotgun pump slides back as it's racked (on fire and through the reload).
+    if let Ok(mut pt) = tf_q.get_mut(wv.shotgun_pump) {
+        let pump = recoil.max(rack);
+        pt.translation.x = 10.0 - 5.0 * pump;
     }
 
     // Pistol slide racks back and the magazine drops out / re-seats on reload.
@@ -913,35 +1007,81 @@ pub fn animate_zombies(
     mut sprite_q: Query<&mut Sprite>,
 ) {
     for (z, rig) in zombies.iter() {
-        let scale = z.r / 12.0;
-        if let Ok(mut b) = tf_q.get_mut(rig.body) {
-            // Shambling body sway around the facing angle.
-            let sway = (z.frame * 1.5).sin() * 0.18;
-            b.rotation = Quat::from_rotation_z(z.angle + sway);
-        }
+        let s = z.r / 12.0;
+        let crawler = z.look.crawler;
         let moving = z.vel.length_squared() > 4.0;
         let stride = if moving { (z.frame * z.stride_rate * 2.0).sin() } else { 0.0 };
-        let amp = 5.0;
-        if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
-            l.translation.x = -2.0 + stride * amp;
-            l.translation.y = 5.0 * scale;
+
+        if let Ok(mut b) = tf_q.get_mut(rig.body) {
+            // Shambling body sway around the facing angle (calmer when crawling).
+            let sway = (z.frame * 1.5).sin() * if crawler { 0.06 } else { 0.18 };
+            b.rotation = Quat::from_rotation_z(z.angle + sway);
+            // A crawler lies flatter to the ground.
+            b.scale = if crawler {
+                Vec3::new(0.92, 0.8, 1.0)
+            } else {
+                Vec3::ONE
+            };
         }
-        if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
-            r.translation.x = -2.0 - stride * amp;
-            r.translation.y = -5.0 * scale;
-        }
-        // Reaching arms swing fore/aft.
-        let reach = (z.frame * 1.3).sin() * 3.0;
-        if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
-            a.translation = Vec3::new(9.0 * scale + reach, 4.0 * scale, 0.1);
-            a.rotation = Quat::from_rotation_z(0.2);
-        }
-        if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
-            a.translation = Vec3::new(9.0 * scale - reach, -4.0 * scale, 0.1);
-            a.rotation = Quat::from_rotation_z(-0.2);
-        }
-        if let Ok(mut h) = tf_q.get_mut(rig.head) {
-            h.translation.x = 4.0 * scale;
+
+        if crawler {
+            // Dragging: the arms reach far forward and haul the body along while
+            // the legs trail limply behind.
+            let pull = (z.frame * 1.6).sin();
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+                a.translation = Vec3::new((11.0 + pull * 4.0) * s, 4.5 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(0.5 + pull * 0.3);
+            }
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+                a.translation = Vec3::new((11.0 - pull * 4.0) * s, -4.5 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(-0.5 - pull * 0.3);
+            }
+            if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
+                l.translation = Vec3::new((-9.0 + stride * 1.5) * s, 3.5 * s, -0.2);
+                l.rotation = Quat::from_rotation_z(0.15);
+            }
+            if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
+                r.translation = Vec3::new((-9.0 - stride * 1.5) * s, -3.5 * s, -0.2);
+                r.rotation = Quat::from_rotation_z(-0.15);
+            }
+            if let Ok(mut h) = tf_q.get_mut(rig.head) {
+                h.translation.x = 6.0 * s;
+                h.translation.y = 0.0;
+            }
+        } else {
+            // Upright shamble. Missing a leg makes the gait limp (the good leg
+            // works harder) and bobs the head.
+            let amp = 5.0 * s;
+            let limp_l = if z.look.missing_leg == 1 { 1.7 } else { 1.0 };
+            let limp_r = if z.look.missing_leg == 0 { 1.7 } else { 1.0 };
+            if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
+                l.translation.x = -2.0 * s + stride * amp * limp_l;
+                l.translation.y = 5.0 * s;
+                l.rotation = Quat::IDENTITY;
+            }
+            if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
+                r.translation.x = -2.0 * s - stride * amp * limp_r;
+                r.translation.y = -5.0 * s;
+                r.rotation = Quat::IDENTITY;
+            }
+            // Reaching arms swing fore/aft with a per-zombie amplitude.
+            let reach = (z.frame * 1.3).sin() * 3.0 * z.arm_amp;
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+                a.translation = Vec3::new(9.0 * s + reach, 4.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(0.2);
+            }
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+                a.translation = Vec3::new(9.0 * s - reach, -4.0 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(-0.2);
+            }
+            if let Ok(mut h) = tf_q.get_mut(rig.head) {
+                h.translation.x = 4.0 * s;
+                h.translation.y = if z.look.missing_leg >= 0 {
+                    (z.frame * z.stride_rate * 2.0).cos() * 0.9 * s
+                } else {
+                    0.0
+                };
+            }
         }
 
         // Hurt flash + low-hp darkening.

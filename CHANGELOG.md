@@ -4,6 +4,27 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.10.0]
+
+### Added
+- **Pump-shotgun handling** — the shotgun is now fired from the hip: held low and
+  angled across the waist, with a **pumping animation** (the fore-end racks back
+  and forward) on every shot and through the reload.
+- **Zombie overhaul**
+  - Zombies are built with **player-like proportions** (rounded torso, longer
+    bare arms, blocky legs, head) and vary in **size and colour**.
+  - **Disfigurement** — some are missing an arm or a leg (hidden limb replaced by
+    a bloody stump and a nub of exposed bone) and many have a **gash with exposed
+    ribs** on the torso.
+  - **Movement matches the body** — a missing leg makes them limp (uneven stride,
+    head bob) and move slower; **crawlers drag themselves** along the ground,
+    hauling with their arms while their legs trail, and move much slower.
+  - **Blood on the ground** — crawlers leave a continuous **blood smear trail**;
+    wounded walkers leave **alternating bloody footprints**.
+  - **Varied gaits** — per-zombie arm-swing amplitude, stride and **turning
+    radius**, so the horde no longer moves in lockstep.
+- **Zombie separation** — zombies push apart instead of stacking on the same spot.
+
 ## [0.9.1]
 
 ### Added
