@@ -52,6 +52,12 @@ pub struct Weapon {
     pub explosive: f32, // blast radius, 0 = none
     pub ammo: Ammo,
     pub reach: f32, // melee reach
+    // Ballistics: small calibres ricochet off walls; big powerful rounds punch
+    // through targets and even walls, losing killing power each time.
+    pub ricochet: u32,    // wall bounces before the round dies
+    pub pierce: i32,      // extra targets the round passes through
+    pub wall_pierce: u32, // walls the round punches through
+    pub falloff: f32,     // damage retained per ricochet / penetration
 }
 
 pub const WEAPONS: &[Weapon] = &[
@@ -72,6 +78,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 0.0,
         ammo: Ammo::None,
         reach: 26.0,
+        ricochet: 0,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 1.0,
     },
     Weapon {
         name: "Bat",
@@ -90,6 +100,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 0.0,
         ammo: Ammo::None,
         reach: 30.0,
+        ricochet: 0,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 1.0,
     },
     Weapon {
         name: "9mm Pistol",
@@ -108,6 +122,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 0.0,
         ammo: Ammo::Rounds,
         reach: 0.0,
+        ricochet: 1,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 0.8,
     },
     Weapon {
         name: "Machine Gun",
@@ -126,6 +144,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 0.0,
         ammo: Ammo::Rounds,
         reach: 0.0,
+        ricochet: 1,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 0.85,
     },
     Weapon {
         name: "Pump Shotgun",
@@ -144,6 +166,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 0.0,
         ammo: Ammo::Shells,
         reach: 0.0,
+        ricochet: 0,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 1.0,
     },
     Weapon {
         name: "Assault Rifle",
@@ -162,6 +188,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 0.0,
         ammo: Ammo::Rounds,
         reach: 0.0,
+        ricochet: 0,
+        pierce: 2,
+        wall_pierce: 1,
+        falloff: 0.6,
     },
     Weapon {
         name: "Bazooka",
@@ -180,6 +210,10 @@ pub const WEAPONS: &[Weapon] = &[
         explosive: 90.0,
         ammo: Ammo::Rockets,
         reach: 0.0,
+        ricochet: 0,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 1.0,
     },
 ];
 
