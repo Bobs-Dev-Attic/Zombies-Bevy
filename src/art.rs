@@ -8,7 +8,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 /// Player body colours, shared between rig construction and the per-frame
 /// hurt-flash tint so the base always restores correctly.
-pub const PLAYER_JACKET: Color = Color::srgb(0.28, 0.33, 0.21);
+pub const PLAYER_JACKET: Color = Color::srgb(0.31, 0.35, 0.29);
 pub const PLAYER_SKIN: Color = Color::srgb(0.33, 0.23, 0.18);
 
 /// Shared generated textures for soft circular shapes.
@@ -149,22 +149,29 @@ pub fn build_rigs(
 }
 
 fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
-    // Palette matched to the reference art: olive-drab field jacket, dark skin,
-    // a padded/segmented olive combat helmet, gunmetal pistol.
+    // Palette matched to the reference art: sage-green field jacket, dark skin,
+    // a padded olive hat, a bulky olive backpack, gunmetal pistol.
     let jacket = PLAYER_JACKET;
-    let jacket_dark = Color::srgb(0.19, 0.23, 0.15);
+    let jacket_dark = Color::srgb(0.21, 0.25, 0.20);
+    let jacket_hi = Color::srgb(0.39, 0.44, 0.37);
     let skin = PLAYER_SKIN;
+    let skin_dark = Color::srgb(0.24, 0.16, 0.12);
     let pants = Color::srgb(0.17, 0.18, 0.15);
-    let helmet = Color::srgb(0.42, 0.40, 0.25);
-    let helmet_dark = Color::srgb(0.30, 0.29, 0.17);
+    let hat = Color::srgb(0.41, 0.39, 0.25);
+    let hat_dark = Color::srgb(0.28, 0.27, 0.16);
+    let pack = Color::srgb(0.40, 0.38, 0.24);
+    let pack_dark = Color::srgb(0.26, 0.25, 0.15);
+    let strap = Color::srgb(0.20, 0.19, 0.13);
+    let stitch = Color::srgb(0.15, 0.18, 0.14);
+    let gun = Color::srgb(0.10, 0.10, 0.12);
 
-    // Shadow (does not rotate — child of root).
+    // Shadow (does not rotate — child of root). Wider to account for the pack.
     let shadow = commands
         .spawn((
             Sprite {
                 image: art.soft.clone(),
-                color: Color::srgba(0.0, 0.0, 0.0, 0.38),
-                custom_size: Some(Vec2::new(30.0, 20.0)),
+                color: Color::srgba(0.0, 0.0, 0.0, 0.40),
+                custom_size: Some(Vec2::new(34.0, 22.0)),
                 ..default()
             },
             Transform::from_xyz(0.0, -4.0, -0.5),
@@ -174,34 +181,86 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     // Body pivot (rotates to face aim).
     let body = commands.spawn((Transform::default(), Visibility::default())).id();
 
+    // ---- Backpack (behind the torso, toward the back = -X). ----
+    let pack_base = commands.spawn(ellipse(art, pack, 19.0, 23.0, -0.35)).id();
+    commands.entity(pack_base).insert(Transform::from_xyz(-8.5, 0.0, -0.35));
+    let pack_lid = commands.spawn(rect(pack_dark, 12.0, 9.0, -0.34)).id();
+    commands.entity(pack_lid).insert(Transform::from_xyz(-10.0, 0.0, -0.34));
+    let pack_seam_v = commands.spawn(rect(pack_dark, 1.6, 20.0, -0.33)).id();
+    commands.entity(pack_seam_v).insert(Transform::from_xyz(-8.0, 0.0, -0.33));
+    let pack_seam_h = commands.spawn(rect(pack_dark, 15.0, 1.6, -0.33)).id();
+    commands.entity(pack_seam_h).insert(Transform::from_xyz(-8.5, 6.0, -0.33));
+    let buckle_a = commands.spawn(rect(strap, 3.0, 3.0, -0.32)).id();
+    commands.entity(buckle_a).insert(Transform::from_xyz(-4.0, 6.5, -0.32));
+    let buckle_b = commands.spawn(rect(strap, 3.0, 3.0, -0.32)).id();
+    commands.entity(buckle_b).insert(Transform::from_xyz(-4.0, -6.5, -0.32));
+    // Shoulder straps running forward over the torso.
+    let strap_a = commands.spawn(rect(strap, 20.0, 3.2, 0.06)).id();
+    commands.entity(strap_a).insert(Transform::from_xyz(2.0, 6.0, 0.06));
+    let strap_b = commands.spawn(rect(strap, 20.0, 3.2, 0.06)).id();
+    commands.entity(strap_b).insert(Transform::from_xyz(2.0, -6.0, 0.06));
+
+    // ---- Legs ----
     let leg_l = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
     let leg_r = commands.spawn(rect(pants, 8.0, 6.0, -0.2)).id();
-    let torso = commands.spawn(ellipse(art, jacket, 22.0, 21.0, 0.0)).id();
-    // Shoulder yoke for a bit of depth.
-    let yoke = commands.spawn(ellipse(art, jacket_dark, 20.0, 16.0, 0.02)).id();
-    let arm_l = commands.spawn(rect(jacket_dark, 13.0, 5.0, 0.1)).id();
-    let arm_r = commands.spawn(rect(jacket_dark, 14.0, 5.0, 0.1)).id();
-    // Dark-skinned face.
-    let head = commands.spawn(ellipse(art, skin, 14.0, 14.0, 0.25)).id();
 
-    // Padded/segmented combat helmet sitting on the crown (child of the head so
-    // it tracks the aim), rendered just behind the face so the face peeks out.
-    let helmet_base = commands.spawn(ellipse(art, helmet, 17.0, 16.0, -0.05)).id();
-    commands.entity(helmet_base).insert(Transform::from_xyz(-3.5, 0.0, -0.05));
-    // A few quilted segments for texture.
-    let seg = |dx: f32, dy: f32| -> (Sprite, Transform) {
+    // ---- Torso with a highlight and a collar for depth ----
+    let torso = commands.spawn(ellipse(art, jacket, 23.0, 22.0, 0.0)).id();
+    let torso_hi = commands.spawn(ellipse(art, jacket_hi, 13.0, 15.0, 0.01)).id();
+    commands.entity(torso_hi).insert(Transform::from_xyz(4.0, 0.0, 0.01));
+    let collar = commands.spawn(ellipse(art, jacket_dark, 12.0, 13.0, 0.04)).id();
+    commands.entity(collar).insert(Transform::from_xyz(6.0, 0.0, 0.04));
+    let yoke = commands.spawn(ellipse(art, jacket_dark, 20.0, 16.0, 0.02)).id();
+    commands.entity(torso).add_children(&[torso_hi, collar]);
+
+    // ---- Arms: sleeve + cuff + hand + ladder stitching, hands ride the arm ----
+    let build_arm = |commands: &mut Commands, len: f32| -> Entity {
+        let arm = commands.spawn(rect(jacket, len, 5.4, 0.1)).id();
+        let fwd = len * 0.5;
+        let cuff = commands.spawn(rect(jacket_dark, 3.0, 5.6, 0.11)).id();
+        commands.entity(cuff).insert(Transform::from_xyz(fwd - 2.0, 0.0, 0.11));
+        let hand = commands.spawn(ellipse(art, skin_dark, 5.5, 5.5, 0.13)).id();
+        commands.entity(hand).insert(Transform::from_xyz(fwd + 1.0, 0.0, 0.13));
+        // ladder stitching along the sleeve
+        let mut kids = vec![cuff, hand];
+        for k in 0..3 {
+            let s = commands.spawn(rect(stitch, 1.2, 4.6, 0.12)).id();
+            commands
+                .entity(s)
+                .insert(Transform::from_xyz(-fwd + 3.0 + k as f32 * 3.5, 0.0, 0.12));
+            kids.push(s);
+        }
+        commands.entity(arm).add_children(&kids);
+        arm
+    };
+    let arm_l = build_arm(commands, 14.0);
+    let arm_r = build_arm(commands, 15.0);
+
+    // ---- Head + padded hat ----
+    let head = commands.spawn(ellipse(art, skin, 14.5, 14.5, 0.25)).id();
+    let brow = commands.spawn(ellipse(art, skin_dark, 12.0, 5.0, 0.255)).id();
+    commands.entity(brow).insert(Transform::from_xyz(2.0, 0.0, 0.255));
+    // Bigger, padded/segmented hat on the crown (behind the face).
+    let hat_base = commands.spawn(ellipse(art, hat, 18.0, 17.0, -0.05)).id();
+    commands.entity(hat_base).insert(Transform::from_xyz(-4.0, 0.0, -0.05));
+    let hat_brim = commands.spawn(ellipse(art, hat_dark, 8.0, 16.0, -0.045)).id();
+    commands.entity(hat_brim).insert(Transform::from_xyz(1.5, 0.0, -0.045));
+    let seg = |dx: f32, dy: f32, w: f32, h: f32| -> (Sprite, Transform) {
         (
-            Sprite::from_color(helmet_dark, Vec2::new(3.0, 5.0)),
+            Sprite::from_color(hat_dark, Vec2::new(w, h)),
             Transform::from_xyz(dx, dy, -0.04),
         )
     };
-    let hs1 = commands.spawn(seg(-2.0, -5.0)).id();
-    let hs2 = commands.spawn(seg(-6.0, 0.0)).id();
-    let hs3 = commands.spawn(seg(-2.0, 5.0)).id();
-    commands.entity(head).add_children(&[helmet_base, hs1, hs2, hs3]);
+    let hs1 = commands.spawn(seg(-3.0, -6.0, 3.2, 5.0)).id();
+    let hs2 = commands.spawn(seg(-7.5, -1.5, 4.0, 3.0)).id();
+    let hs3 = commands.spawn(seg(-7.5, 2.5, 4.0, 3.0)).id();
+    let hs4 = commands.spawn(seg(-3.0, 6.0, 3.2, 5.0)).id();
+    commands
+        .entity(head)
+        .add_children(&[brow, hat_base, hat_brim, hs1, hs2, hs3, hs4]);
 
-    // Gunmetal 9mm: a slide plus a short grip.
-    let weapon = commands.spawn(rect(Color::srgb(0.09, 0.09, 0.11), 18.0, 4.5, 0.15)).id();
+    // ---- Gunmetal 9mm: slide + grip ----
+    let weapon = commands.spawn(rect(gun, 18.0, 4.5, 0.15)).id();
     let grip = commands.spawn(rect(Color::srgb(0.06, 0.06, 0.07), 5.0, 6.0, 0.14)).id();
     commands.entity(grip).insert(Transform::from_xyz(-4.0, 3.0, 0.14));
     commands.entity(weapon).add_child(grip);
@@ -217,9 +276,10 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         ))
         .id();
 
-    commands
-        .entity(body)
-        .add_children(&[leg_l, leg_r, torso, yoke, arm_l, arm_r, weapon, head, flash]);
+    commands.entity(body).add_children(&[
+        pack_base, pack_lid, pack_seam_v, pack_seam_h, buckle_a, buckle_b,
+        leg_l, leg_r, torso, yoke, strap_a, strap_b, arm_l, arm_r, weapon, head, flash,
+    ]);
 
     // Reload cycle indicator: a ring of ticks floating above the head. Child of
     // root (not body) so it stays screen-aligned regardless of aim.
