@@ -4,6 +4,26 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.19.0]
+
+### Added
+- **Ragdoll deaths** — a killed zombie no longer pops instantly into a decal. It
+  now **topples and falls** over a short beat: the body flattens front-to-back,
+  limbs flop out limp, it keeps **sliding along the shot's momentum**, and dribbles
+  blood and guts before settling into a detailed corpse.
+- **Stagger** — a solid non-lethal hit can knock a zombie off balance, making it
+  stumble and slow for a moment; heavier rounds stagger more often.
+
+### Changed
+- **Thinner zombie bodies** — torsos are now distinctly thin front-to-back (dead,
+  no breath in the chest) while staying broad shoulder-to-shoulder.
+- **Gorier hits** — every hit throws a bigger blood spray, and solid hits can blow
+  a chunk of flesh, organ or bone loose. Death bursts fling organs and a bone shard.
+- **Side-by-side firing/reload sequence** — the gun now **kicks up and back** on
+  firing; the reload plays out in order: the breech **breaks open**, the two spent
+  **shells fly back** over the shoulder, fresh shells load, then the barrels
+  **raise shut** so you can fire again.
+
 ## [0.18.0]
 
 ### Added

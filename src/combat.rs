@@ -514,6 +514,37 @@ pub fn reload_fx(
             },
         ));
     }
+    // Side-by-side break action: the instant it opens, the two spent shells are
+    // thrown up and back out of the breech.
+    if now > 0.0 && *prev <= 0.0 && kind == WeaponKind::Sxs {
+        let angle = p.angle;
+        let pos = tf.translation.truncate();
+        let fwd = Vec2::new(angle.cos(), angle.sin());
+        let breech = pos + fwd * 6.0;
+        let mut rng = rand::thread_rng();
+        let shell = Color::srgb(0.62, 0.16, 0.12); // spent red plastic hull
+        for i in 0..2 {
+            let side = if i == 0 { 1.0 } else { -1.0 };
+            // Flicked back over the shoulder, fanning slightly apart.
+            let a = angle + std::f32::consts::PI + side * 0.3 + rng.gen_range(-0.15..0.15);
+            commands.spawn((
+                Sprite::from_color(shell, Vec2::new(4.5, 2.4)),
+                Transform {
+                    translation: Vec3::new(breech.x, breech.y, Z_PARTICLE),
+                    rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+                    ..default()
+                },
+                Particle {
+                    vel: Vec2::new(a.cos(), a.sin()) * rng.gen_range(140.0..230.0),
+                    life: 0.9,
+                    max_life: 0.9,
+                    drag: 0.93,
+                    gravity: 0.0,
+                    base: shell,
+                },
+            ));
+        }
+    }
     *prev = now;
 }
 
@@ -662,7 +693,22 @@ pub fn projectile_system(
                     z.hp -= proj.damage;
                     z.hurt_flash = 0.09;
                     z.apply_knockback(dir, proj.knockback);
-                    blood_burst(&mut commands, zp, dir, 5);
+                    // Bloodier on every hit — the spray scales with the zombie's
+                    // gore, and some solid hits blow a chunk of flesh/organ loose.
+                    blood_burst(&mut commands, zp, dir, (5.0 + 4.0 * z.gore) as u32);
+                    if rng.gen_bool(0.22) {
+                        gib_spray(&mut commands, zp, dir, &z, &mut rng);
+                    }
+                    // A solid non-lethal hit can stagger them (stumble + slow);
+                    // a heavy round is more likely to knock them off balance.
+                    if z.hp > 0.0 {
+                        if proj.knockback > 120.0 && rng.gen_bool(0.5) {
+                            z.stagger = rng.gen_range(0.25..0.5);
+                            z.apply_knockback(dir, proj.knockback * 0.6);
+                        } else if rng.gen_bool(0.15) {
+                            z.stagger = rng.gen_range(0.15..0.3);
+                        }
+                    }
                     proj.hit.push(ze);
 
                     // Headshot: the closer the zombie is to the player, the better
@@ -1047,30 +1093,142 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
     place(commands, bone, 4.0 * s, 1.0 * s, 5.0 * s, -3.0 * s, -0.15, zc + 0.18);
 }
 
-/// Turn dead zombies into corpses + gore and bump the score.
+/// How long the ragdoll fall plays before the actor becomes a static corpse.
+pub const DEATH_DUR: f32 = 0.62;
+
+/// Drive the death of a zombie: when its hp hits zero it enters a short ragdoll
+/// fall (handled by the animator), sliding along the shot's momentum and
+/// trailing gore, then it's replaced by a detailed sprawled corpse. Score + kill
+/// credit are counted once, the frame it starts dying.
 pub fn zombie_death_system(
+    time: Res<Time>,
+    world: Res<World>,
     mut commands: Commands,
     art: Res<crate::art::Art>,
     mut score: ResMut<Score>,
     mut player_q: Query<&mut Player>,
-    q: Query<(Entity, &Zombie, &Transform)>,
+    mut q: Query<(Entity, &mut Zombie, &mut Transform)>,
 ) {
+    let dt = time.delta_secs();
     let mut rng = rand::thread_rng();
-    for (e, z, tf) in q.iter() {
-        if z.hp > 0.0 && !z.dead {
-            continue;
+    for (e, mut z, mut tf) in q.iter_mut() {
+        // Kick off the death sequence the first frame hp reaches zero.
+        if z.death_t <= 0.0 {
+            if z.hp > 0.0 && !z.dead {
+                continue;
+            }
+            z.death_t = 0.0001;
+            let knock = z.knock;
+            // Which way the body topples as it falls.
+            z.death_spin = if rng.gen_bool(0.5) { 1.0 } else { -1.0 } * rng.gen_range(0.7..1.5);
+            // Keep sliding: carry the shot's momentum, plus a shove that way.
+            let dir = if knock.length_squared() > 1.0 {
+                knock.normalize()
+            } else {
+                -Vec2::new(z.angle.cos(), z.angle.sin())
+            };
+            z.knock += dir * rng.gen_range(40.0..130.0);
+            // A wet burst on death: blood sprays and organs/bone chunks fly out.
+            let pos = tf.translation.truncate();
+            let ga = dir.y.atan2(dir.x);
+            let amount = (12.0 * z.gore) as u32 + if z.headshot { 8 } else { 0 };
+            blood_burst(&mut commands, pos, ga, amount);
+            gib_spray(&mut commands, pos, ga, &z, &mut rng);
+            // Score + kill credit, once.
+            score.kills += 1;
+            score.points += z.score;
+            if let Ok(mut p) = player_q.single_mut() {
+                p.kills += 1;
+            }
         }
+
+        // Advance the fall and slide along the (decaying) knockback.
+        z.death_t += dt;
+        let knock = z.knock * 0.002f32.powf(dt);
+        z.knock = knock;
         let pos = tf.translation.truncate();
-        // Gore burst (extra on a headshot).
-        let amount = (10.0 * z.gore) as u32 + if z.headshot { 6 } else { 0 };
-        blood_burst(&mut commands, pos, rng.gen_range(0.0..TAU), amount);
-        // A detailed, sprawled corpse.
-        spawn_kill_corpse(&mut commands, &art, pos, z.angle, &z.look, z.headshot, &mut rng);
-        score.kills += 1;
-        score.points += z.score;
-        if let Ok(mut p) = player_q.single_mut() {
-            p.kills += 1;
+        let resolved = world.collide(pos + knock * dt, z.r * 0.6);
+        tf.translation.x = resolved.x;
+        tf.translation.y = resolved.y;
+        tf.translation.z = depth_z(Z_CHAR, resolved.y) - 0.002;
+
+        // Dribble blood/guts along the slide during the first part of the fall.
+        if z.death_t < DEATH_DUR * 0.8 && rng.gen_bool(0.5) {
+            let sz: f32 = rng.gen_range(4.0..9.0);
+            let o = Vec2::new(rng.gen_range(-6.0..6.0), rng.gen_range(-6.0..6.0));
+            commands.spawn((
+                Sprite {
+                    color: Color::srgba(0.30, 0.02, 0.03, rng.gen_range(0.5..0.75)),
+                    custom_size: Some(Vec2::splat(sz)),
+                    ..default()
+                },
+                Transform::from_xyz(pos.x + o.x, pos.y + o.y, Z_DECAL + rng.gen_range(0.1..1.0)),
+                Decal { life: rng.gen_range(12.0..22.0) },
+            ));
         }
-        commands.entity(e).despawn();
+
+        // Fall finished: lay the detailed corpse (at the angle it toppled) and
+        // remove the actor.
+        if z.death_t >= DEATH_DUR {
+            spawn_kill_corpse(
+                &mut commands,
+                &art,
+                resolved,
+                z.angle + z.death_spin,
+                &z.look,
+                z.headshot,
+                &mut rng,
+            );
+            commands.entity(e).despawn();
+        }
     }
+}
+
+/// Fling a few organ/gut chunks and a bone shard outward — used on death and
+/// when a limb is blown off. Reads gore scale off the zombie.
+fn gib_spray(commands: &mut Commands, pos: Vec2, dir: f32, z: &Zombie, rng: &mut impl Rng) {
+    let n = (3.0 + 3.0 * z.gore) as u32;
+    for _ in 0..n {
+        let a = dir + rng.gen_range(-1.1..1.1);
+        let sp = rng.gen_range(80.0..240.0);
+        // Purple-red organ chunk.
+        let g: f32 = rng.gen_range(0.34..0.56);
+        commands.spawn((
+            Sprite::from_color(
+                Color::srgb(g, 0.1, 0.13),
+                Vec2::splat(rng.gen_range(3.0..6.0)),
+            ),
+            Transform {
+                translation: Vec3::new(pos.x, pos.y, Z_PARTICLE + 1.0),
+                rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+                ..default()
+            },
+            Particle {
+                vel: Vec2::new(a.cos(), a.sin()) * sp,
+                life: rng.gen_range(0.5..0.9),
+                max_life: 0.9,
+                drag: 0.9,
+                gravity: 0.0,
+                base: Color::srgb(g, 0.1, 0.13),
+            },
+        ));
+    }
+    // A shard of bone.
+    let a = dir + rng.gen_range(-0.9..0.9);
+    commands.spawn((
+        Sprite::from_color(Color::srgb(0.86, 0.83, 0.74), Vec2::new(4.0, 1.8)),
+        Transform {
+            translation: Vec3::new(pos.x, pos.y, Z_PARTICLE + 1.1),
+            rotation: Quat::from_rotation_z(a),
+            ..default()
+        },
+        Particle {
+            vel: Vec2::new(a.cos(), a.sin()) * rng.gen_range(120.0..260.0),
+            life: 0.8,
+            max_life: 0.8,
+            drag: 0.9,
+            gravity: 0.0,
+            base: Color::srgb(0.86, 0.83, 0.74),
+        },
+    ));
 }
