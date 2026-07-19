@@ -755,11 +755,12 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         stump(commands, -2.0 * s, -5.0 * s);
     }
 
-    // ---- Torso (rounded, thinner front-to-back like the player) with an
-    // optional bloody gash/ribs. ----
-    let torso = commands.spawn(rrect(art, look.shirt, 16.0 * s, 16.0 * s, 0.0)).id();
-    let back = commands.spawn(rrect(art, darker(look.shirt, 0.7), 8.0 * s, 15.0 * s, -0.01)).id();
-    commands.entity(back).insert(Transform::from_xyz(-4.0 * s, 0.0, -0.01));
+    // ---- Torso (rounded, distinctly thin front-to-back — they're dead, no
+    // breath in the chest — but still broad shoulder-to-shoulder) with an
+    // optional bloody gash/ribs. Front-to-back is the local X (facing) axis. ----
+    let torso = commands.spawn(rrect(art, look.shirt, 11.0 * s, 16.0 * s, 0.0)).id();
+    let back = commands.spawn(rrect(art, darker(look.shirt, 0.7), 5.0 * s, 14.0 * s, -0.01)).id();
+    commands.entity(back).insert(Transform::from_xyz(-3.2 * s, 0.0, -0.01));
     commands.entity(torso).add_child(back);
     if look.gash {
         let wound = commands.spawn(rect(blood, 6.0 * s, 7.0 * s, 0.03)).id();
@@ -908,6 +909,21 @@ fn melee_fore_bend_r(stab: bool, arc: f32) -> f32 {
         1.5 - arc * 1.6
     } else {
         1.5 - arc * 0.6
+    }
+}
+
+/// Break-action open amount (0 = closed/level, 1 = fully broken open, muzzles at
+/// the ground) across a reload cycle. It snaps open fast, holds open while the
+/// spent shells eject and two fresh shells go in, then raises shut so the shooter
+/// can fire again.
+fn sxs_open(rl: f32) -> f32 {
+    let ss = |t: f32| t * t * (3.0 - 2.0 * t);
+    if rl < 0.16 {
+        ss(rl / 0.16)
+    } else if rl < 0.72 {
+        1.0
+    } else {
+        1.0 - ss((rl - 0.72) / 0.28)
     }
 }
 
@@ -1185,11 +1201,12 @@ pub fn animate_player(
             wt.rotation = Quat::IDENTITY;
         }
     } else if w.kind == WeaponKind::Sxs {
-        // Shouldered side-by-side. Held level to fire; on a reload the action
-        // breaks open — the barrels hinge down to point at the ground while the
-        // support hand feeds two fresh shells into the breech, then it snaps shut.
+        // Shouldered side-by-side. Held level to fire; on firing it kicks up and
+        // back. On a reload the action breaks open — the barrels hinge down to
+        // point at the ground while the support hand feeds two fresh shells into
+        // the breech, then the barrels raise shut so it can fire again.
         let back = recoil * 2.3;
-        let open = if reloading { (rl * std::f32::consts::PI).sin() } else { 0.0 };
+        let open = if reloading { sxs_open(rl) } else { 0.0 };
         // Support/left hand: on the fore-end when closed, dropping to the open
         // breech to load shells.
         if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
@@ -1202,9 +1219,10 @@ pub fn animate_player(
             a.rotation = Quat::from_rotation_z(-1.05);
         }
         if let Ok(mut wt) = tf_q.get_mut(rig.weapon) {
-            // Level when firing; the whole gun tips down as it breaks open.
-            wt.translation = Vec3::new(12.0 - back, -open * 4.0, 0.15);
-            wt.rotation = Quat::from_rotation_z(-open * 0.5);
+            // Level when firing; the muzzles kick up and the gun jumps back on
+            // recoil; the whole gun tips down as it breaks open to reload.
+            wt.translation = Vec3::new(12.0 - back, -open * 4.0 + recoil * 2.2, 0.15);
+            wt.rotation = Quat::from_rotation_z(-open * 0.5 + recoil * 0.45);
         }
     } else {
         // Two-handed grip: the grip sits at the hands (~x=24), recoiling back on
@@ -1272,7 +1290,7 @@ pub fn animate_player(
     // Side-by-side barrels hinge open on a reload (break action), then snap shut.
     if let Ok(mut bt) = tf_q.get_mut(wv.sxs_barrel) {
         let open = if reloading && w.kind == WeaponKind::Sxs {
-            (rl * std::f32::consts::PI).sin()
+            sxs_open(rl)
         } else {
             0.0
         };
@@ -1423,6 +1441,48 @@ pub fn animate_zombies(
         let crawler = z.look.crawler;
         let moving = z.vel.length_squared() > 4.0;
         let stride = if moving { (z.frame * z.stride_rate * 2.0).sin() } else { 0.0 };
+
+        // ---- Ragdoll death: as hp hits zero the body topples, limbs flop limp
+        // and splay out, and it flattens front-to-back as it drops to the ground
+        // (visible from the top-down view), before the corpse decal takes over.
+        if z.death_t > 0.0 {
+            let p = (z.death_t / crate::combat::DEATH_DUR).clamp(0.0, 1.0);
+            let fall = p * p * (3.0 - 2.0 * p); // smoothstep
+            let sgn = if z.death_spin >= 0.0 { 1.0 } else { -1.0 };
+            if let Ok(mut b) = tf_q.get_mut(rig.body) {
+                b.rotation = Quat::from_rotation_z(z.angle + z.death_spin * fall);
+                // Sprawl a touch wider and flatten front-to-back as it goes down.
+                b.scale = Vec3::new(1.0 + 0.14 * fall, 1.0 - 0.24 * fall, 1.0);
+            }
+            // Arms flop out limp to the sides.
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+                a.translation = Vec3::new(-1.0 * s, (8.0 + 4.0 * fall) * s, 0.1);
+                a.rotation = Quat::from_rotation_z(0.5 + 1.2 * fall);
+            }
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+                a.translation = Vec3::new(-1.0 * s, (-8.0 - 4.0 * fall) * s, 0.1);
+                a.rotation = Quat::from_rotation_z(-0.5 - 1.2 * fall);
+            }
+            set_bend(&mut tf_q, limbs.fore_l, -0.5 + 0.8 * fall);
+            set_bend(&mut tf_q, limbs.fore_r, 0.5 - 0.8 * fall);
+            // Legs splay out and go slack.
+            if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
+                l.translation = Vec3::new((-4.0 - 2.0 * fall) * s, (5.0 + 3.0 * fall) * s, -0.2);
+                l.rotation = Quat::from_rotation_z(0.35 * fall);
+            }
+            if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
+                r.translation = Vec3::new((-4.0 - 2.0 * fall) * s, (-5.0 - 3.0 * fall) * s, -0.2);
+                r.rotation = Quat::from_rotation_z(-0.35 * fall);
+            }
+            set_bend(&mut tf_q, limbs.shin_l, 0.22 * fall);
+            set_bend(&mut tf_q, limbs.shin_r, -0.22 * fall);
+            // Head lolls to the side as it drops.
+            if let Ok(mut h) = tf_q.get_mut(rig.head) {
+                h.translation.x = (4.0 + 2.0 * fall) * s;
+                h.translation.y = sgn * 3.0 * fall * s;
+            }
+            continue;
+        }
 
         if let Ok(mut b) = tf_q.get_mut(rig.body) {
             // Shambling body sway around the facing angle (calmer when crawling).

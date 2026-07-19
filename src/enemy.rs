@@ -176,6 +176,9 @@ pub struct Zombie {
     pub headshot: bool,     // killed by a headshot → brain burst + ragdoll corpse
     pub sever_pending: i8,  // a limb to shoot off this frame: -1 none, 0..3 limb
     pub severed_mask: u8,   // bitmask of limbs already blown off
+    pub death_t: f32,       // >0 once the ragdoll death has begun (counts up in seconds)
+    pub death_spin: f32,    // which way the body topples as it falls
+    pub stagger: f32,       // brief flinch/stumble timer from a solid non-lethal hit
 }
 
 impl Zombie {
@@ -249,6 +252,9 @@ impl Zombie {
             headshot: false,
             sever_pending: -1,
             severed_mask: 0,
+            death_t: 0.0,
+            death_spin: 0.0,
+            stagger: 0.0,
         }
     }
 
@@ -415,8 +421,14 @@ pub fn zombie_ai(
 
     let mut q = set.p1();
     for (mut z, mut tf) in q.iter_mut() {
+        // A dying zombie no longer chases or attacks — the death system ragdolls
+        // it and slides it along any residual knockback.
+        if z.death_t > 0.0 {
+            continue;
+        }
         z.hurt_flash = (z.hurt_flash - dt).max(0.0);
         z.attack_cd = (z.attack_cd - dt).max(0.0);
+        z.stagger = (z.stagger - dt).max(0.0);
         z.gait_t += dt;
         z.frame += dt * (2.0 + z.speed * 0.05) * z.stride_rate;
 
@@ -426,7 +438,8 @@ pub fn zombie_ai(
         let heading = to / d;
         let hp_frac = (z.hp / z.max_hp).clamp(0.0, 1.0);
         let wound_mul = 0.55 + 0.45 * hp_frac;
-        let spd = z.speed * wound_mul;
+        // A recent solid hit staggers them: they stumble and slow for a moment.
+        let spd = z.speed * wound_mul * if z.stagger > 0.0 { 0.25 } else { 1.0 };
 
         let mut tvel = Vec2::ZERO;
         match z.pattern {
@@ -503,7 +516,7 @@ pub fn zombie_ai(
 
         // Melee the player.
         let pd = (ppos - resolved).length();
-        if pd < z.r + 15.0 + 2.0 && z.attack_cd <= 0.0 {
+        if pd < z.r + 15.0 + 2.0 && z.attack_cd <= 0.0 && z.stagger <= 0.0 {
             player_hurt += z.dmg * (0.55 + 0.45 * hp_frac);
             z.attack_cd = 0.7;
             let a = (ppos - resolved).y.atan2((ppos - resolved).x);
@@ -529,9 +542,11 @@ pub fn zombie_separation(
     world: Res<World>,
     mut q: Query<(Entity, &mut Transform, &Zombie)>,
 ) {
-    // Snapshot positions/radii.
+    // Snapshot positions/radii. Dying zombies are ragdolling on the ground and
+    // don't take part in crowd separation.
     let items: Vec<(Entity, Vec2, f32)> = q
         .iter()
+        .filter(|(_, _, z)| z.death_t <= 0.0)
         .map(|(e, tf, z)| (e, tf.translation.truncate(), z.r))
         .collect();
     if items.len() < 2 {
