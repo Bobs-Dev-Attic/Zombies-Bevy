@@ -70,6 +70,9 @@ pub struct Player {
     pub swing_dur: f32,
     pub melee_stab: bool, // alternates each melee attack: false = slash, true = stab
     pub kills: u32,
+    pub blood_feet: f32,  // remaining "wetness" of blood on the soles (leaves prints)
+    pub foot_side: i8,    // which foot leaves the next bloody print
+    pub step_acc: f32,    // distance accumulated toward the next footprint
 }
 
 impl Default for Player {
@@ -122,6 +125,9 @@ impl Default for Player {
             swing_dur: 0.22,
             melee_stab: false,
             kills: 0,
+            blood_feet: 0.0,
+            foot_side: 1,
+            step_acc: 0.0,
         }
     }
 }

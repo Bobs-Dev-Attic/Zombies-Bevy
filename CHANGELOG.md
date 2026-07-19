@@ -4,6 +4,22 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.26.0]
+
+### Added
+- **Bloody footprints** — walk through a pool of blood and you'll track fading
+  red footprints behind you for a few strides, alternating feet, until the blood
+  wears off the soles.
+- **Pick your scenario** — the main menu has a **SCENARIO** button that cycles
+  Random / Downtown Streets / City Park / The Neighborhood, so you can choose
+  where to fight instead of getting a random map.
+
+### Changed
+- **Bigger, gorier corpses** — a fallen body now sprawls **larger** than its
+  standing footprint, with **jointed two-segment limbs** (elbows, knees, hands,
+  feet), a rounded head with a **face** (eyes, nose, agape mouth), and — on some —
+  a **partial, torn-away face** exposing skull and teeth.
+
 ## [0.25.0]
 
 ### Added

@@ -70,6 +70,10 @@ impl Scene {
     }
 }
 
+/// The scenario the player picked on the menu; `None` = random each run.
+#[derive(Resource, Default)]
+pub struct SceneChoice(pub Option<Scene>);
+
 #[derive(Resource)]
 pub struct World {
     pub cols: usize,
@@ -167,7 +171,7 @@ impl World {
 
 /// Build the arena for a randomly chosen scene: a downtown street grid, an open
 /// city park, or a house-lined neighborhood — each with its own walls and props.
-pub fn generate_world() -> World {
+pub fn generate_world(choice: Option<Scene>) -> World {
     let cols = 46usize;
     let rows = 34usize;
     let mut cells = vec![Cell::Floor; cols * rows];
@@ -187,9 +191,11 @@ pub fn generate_world() -> World {
     }
     let mut rng = rand::thread_rng();
     let center = (cols / 2, rows / 2);
-    let scene = *[Scene::Streets, Scene::Park, Scene::Neighborhood]
-        .get(rng.gen_range(0..3))
-        .unwrap();
+    let scene = choice.unwrap_or_else(|| {
+        *[Scene::Streets, Scene::Park, Scene::Neighborhood]
+            .get(rng.gen_range(0..3))
+            .unwrap()
+    });
 
     match scene {
         Scene::Streets => {
