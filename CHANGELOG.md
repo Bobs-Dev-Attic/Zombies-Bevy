@@ -4,6 +4,22 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.25.0]
+
+### Added
+- **Zombies hear you and pathfind** — a flow field (breadth-first from the player)
+  now lets zombies **route around walls and through doorways** to reach you instead
+  of grinding into a corner. Each zombie has a **hearing range**: it detects you if
+  a walkable path within that many tiles exists (so it hears you around a corner),
+  and **firing makes noise** that draws them from much farther — loud guns carry,
+  the flamethrower is quiet, melee is silent. Out of earshot they just shuffle.
+- **Varying pace** — each zombie now has its own speed rhythm: some plod at a steady
+  crawl, others lurch along in surges, on top of the existing shamble.
+
+### Fixed
+- **No more trapped spawns** — zombies only spawn on tiles with a walkable path back
+  to the player, so they never appear sealed inside a wall pocket or closed room.
+
 ## [0.24.0]
 
 ### Added

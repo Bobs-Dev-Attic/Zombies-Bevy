@@ -210,6 +210,11 @@ pub struct Zombie {
     pub burning: f32,       // seconds of fire left; burns for damage-over-time + ash death
     pub burn_fx: f32,       // countdown to the next flame/smoke puff while burning
     pub ash: bool,          // died to fire → leaves a smoldering ash pile, not a corpse
+    pub hearing: u32,       // how far (in path-tiles) it can hear the player at rest
+    pub alert: f32,         // seconds it keeps hunting after last hearing the player
+    pub pace_amp: f32,      // per-zombie speed-pulse amplitude (pace variety)
+    pub pace_freq: f32,     // speed-pulse frequency
+    pub pace_phase: f32,    // speed-pulse phase offset
 }
 
 impl Zombie {
@@ -289,6 +294,12 @@ impl Zombie {
             burning: 0.0,
             burn_fx: 0.0,
             ash: false,
+            hearing: rng.gen_range(6..14),
+            alert: 0.0,
+            // Most zombies keep a fairly even pace; some lurch along in surges.
+            pace_amp: if rng.gen_bool(0.5) { rng.gen_range(0.15..0.6) } else { rng.gen_range(0.0..0.12) },
+            pace_freq: rng.gen_range(0.3..1.4),
+            pace_phase: rng.gen_range(0.0..TAU),
         }
     }
 
@@ -327,12 +338,18 @@ pub struct SpitEvent {
     pub angle: f32,
 }
 
-fn floor_ring_point(world: &World, center: Vec2, rng: &mut impl Rng) -> Option<Vec2> {
-    for _ in 0..24 {
+fn floor_ring_point(world: &World, ff: &FlowField, center: Vec2, rng: &mut impl Rng) -> Option<Vec2> {
+    for _ in 0..30 {
         let a = rng.gen_range(0.0..TAU);
         let d = rng.gen_range(560.0..820.0);
         let p = center + Vec2::new(a.cos(), a.sin()) * d;
-        if !world.blocks_point(p) {
+        if world.blocks_point(p) {
+            continue;
+        }
+        // Only spawn where a walkable path back to the player exists — never in a
+        // sealed pocket where the zombie would be trapped. (Before the field is
+        // first built, fall back to any open tile.)
+        if ff.dist.is_empty() || ff.tile_dist(world, p).is_some() {
             return Some(p);
         }
     }
@@ -342,6 +359,7 @@ fn floor_ring_point(world: &World, center: Vec2, rng: &mut impl Rng) -> Option<V
 pub fn wave_system(
     time: Res<Time>,
     world: Res<World>,
+    ff: Res<FlowField>,
     mut waves: ResMut<WaveState>,
     mut score: ResMut<Score>,
     player_q: Query<&Transform, With<Player>>,
@@ -372,7 +390,7 @@ pub fn wave_system(
         waves.spawn_timer -= dt;
         if waves.spawn_timer <= 0.0 && alive < 42 {
             waves.spawn_timer = (0.7 - waves.wave as f32 * 0.03).max(0.18);
-            if let Some(p) = floor_ring_point(&world, center, &mut rng) {
+            if let Some(p) = floor_ring_point(&world, &ff, center, &mut rng) {
                 let kind = pick_kind(waves.wave, &mut rng);
                 let hp_scale = 1.0 + waves.wave as f32 * 0.06;
                 let z = Zombie::new(kind, hp_scale, &mut rng);
@@ -439,9 +457,132 @@ fn pick_kind(wave: u32, rng: &mut impl Rng) -> ZKind {
     }
 }
 
+/// A breadth-first distance field from the player over the walkable tiles, so
+/// zombies can follow a path around walls instead of grinding into them. Rebuilt
+/// each frame (the grid is tiny).
+#[derive(Resource, Default)]
+pub struct FlowField {
+    pub cols: usize,
+    pub rows: usize,
+    pub dist: Vec<u32>, // steps to the player; u32::MAX = unreachable
+}
+
+impl FlowField {
+    /// Path-distance (in tiles) from `p` to the player, or None if walled off.
+    pub fn tile_dist(&self, world: &World, p: Vec2) -> Option<u32> {
+        if self.dist.is_empty() {
+            return None;
+        }
+        let (c, r) = world.world_to_tile(p);
+        if c < 0 || r < 0 || c as usize >= self.cols || r as usize >= self.rows {
+            return None;
+        }
+        let d = self.dist[r as usize * self.cols + c as usize];
+        (d != u32::MAX).then_some(d)
+    }
+
+    /// Unit direction that steps toward the player around walls, at world `p`.
+    pub fn dir(&self, world: &World, p: Vec2) -> Option<Vec2> {
+        if self.dist.is_empty() {
+            return None;
+        }
+        let (c, r) = world.world_to_tile(p);
+        if c < 0 || r < 0 || c as usize >= self.cols || r as usize >= self.rows {
+            return None;
+        }
+        let here = self.dist[r as usize * self.cols + c as usize];
+        if here == u32::MAX {
+            return None;
+        }
+        let mut best = here;
+        let mut best_tile: Option<(isize, isize)> = None;
+        for dr in -1..=1 {
+            for dc in -1..=1 {
+                if dr == 0 && dc == 0 {
+                    continue;
+                }
+                let nc = c + dc;
+                let nr = r + dr;
+                if nc < 0 || nr < 0 || nc as usize >= self.cols || nr as usize >= self.rows {
+                    continue;
+                }
+                // Don't cut a diagonal through a wall corner.
+                if dc != 0 && dr != 0 && (world.solid(c + dc, r) || world.solid(c, r + dr)) {
+                    continue;
+                }
+                let nd = self.dist[nr as usize * self.cols + nc as usize];
+                if nd < best {
+                    best = nd;
+                    best_tile = Some((nc, nr));
+                }
+            }
+        }
+        best_tile.map(|(nc, nr)| {
+            (world.tile_center(nc as usize, nr as usize) - p).normalize_or_zero()
+        })
+    }
+}
+
+/// Loudness the player is currently making (world-unit radius). Firing raises it;
+/// it fades quickly. Zombies within this radius hear the player even through walls.
+#[derive(Resource, Default)]
+pub struct Noise {
+    pub level: f32,
+}
+
+/// Rebuild the flow field each frame: BFS out from the player's tile.
+pub fn compute_flow_field(
+    world: Res<World>,
+    player_q: Query<&Transform, With<Player>>,
+    mut ff: ResMut<FlowField>,
+) {
+    let n = world.cols * world.rows;
+    if ff.dist.len() != n {
+        ff.cols = world.cols;
+        ff.rows = world.rows;
+        ff.dist = vec![u32::MAX; n];
+    }
+    for d in ff.dist.iter_mut() {
+        *d = u32::MAX;
+    }
+    let Ok(ptf) = player_q.single() else {
+        return;
+    };
+    let (pc, pr) = world.world_to_tile(ptf.translation.truncate());
+    if pc < 0 || pr < 0 || pc as usize >= world.cols || pr as usize >= world.rows || world.solid(pc, pr) {
+        return;
+    }
+    let cols = world.cols;
+    let idx = |c: isize, r: isize| r as usize * cols + c as usize;
+    let mut queue: std::collections::VecDeque<(isize, isize)> = std::collections::VecDeque::new();
+    ff.dist[idx(pc, pr)] = 0;
+    queue.push_back((pc, pr));
+    while let Some((c, r)) = queue.pop_front() {
+        let cd = ff.dist[idx(c, r)];
+        for (dc, dr) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let nc = c + dc;
+            let nr = r + dr;
+            if nc < 0 || nr < 0 || nc as usize >= cols || nr as usize >= world.rows {
+                continue;
+            }
+            if world.solid(nc, nr) {
+                continue;
+            }
+            let ni = idx(nc, nr);
+            if ff.dist[ni] != u32::MAX {
+                continue;
+            }
+            ff.dist[ni] = cd + 1;
+            queue.push_back((nc, nr));
+        }
+    }
+}
+
 pub fn zombie_ai(
     time: Res<Time>,
     world: Res<World>,
+    ff: Res<FlowField>,
+    mut noise: ResMut<Noise>,
     mut spit_ev: EventWriter<SpitEvent>,
     mut set: ParamSet<(
         Query<(&mut Player, &Transform)>,
@@ -456,6 +597,9 @@ pub fn zombie_ai(
         };
         (ptf.translation.truncate(), 0.0f32, Vec2::ZERO)
     };
+
+    // Player-made noise (from firing) fades quickly.
+    noise.level = (noise.level - dt * 520.0).max(0.0);
 
     let mut q = set.p1();
     for (mut z, mut tf) in q.iter_mut() {
@@ -476,47 +620,64 @@ pub fn zombie_ai(
         let heading = to / d;
         let hp_frac = (z.hp / z.max_hp).clamp(0.0, 1.0);
         let wound_mul = 0.55 + 0.45 * hp_frac;
-        // A recent solid hit staggers them: they stumble and slow for a moment.
-        let spd = z.speed * wound_mul * if z.stagger > 0.0 { 0.25 } else { 1.0 };
+        // Varying pace: a per-zombie speed pulse so some plod evenly and others
+        // lurch along in surges.
+        let pulse = (1.0 + z.pace_amp * (z.gait_t * z.pace_freq + z.pace_phase).sin()).clamp(0.35, 1.7);
+        let stag = if z.stagger > 0.0 { 0.25 } else { 1.0 };
+        let spd = z.speed * wound_mul * stag * pulse;
+
+        // Hearing: the zombie detects the player if a walkable path of at most
+        // `hearing` tiles exists (it hears them nearby, even around a corner), or
+        // if the player is making noise within straight-line earshot. Once
+        // alerted it keeps hunting for a few seconds so it doesn't dither at the
+        // edge of hearing.
+        let path_dist = ff.tile_dist(&world, pos);
+        let heard = path_dist.map_or(false, |t| t <= z.hearing) || d <= noise.level;
+        if heard {
+            z.alert = 4.0;
+        }
+        z.alert = (z.alert - dt).max(0.0);
+        let hunting = z.alert > 0.0;
+        // While hunting, steer along the path around walls; else head straight.
+        let chase_heading = if hunting {
+            ff.dir(&world, pos).unwrap_or(heading)
+        } else {
+            heading
+        };
 
         let mut tvel = Vec2::ZERO;
-        match z.pattern {
-            Pattern::WanderChase => {
-                if d < 340.0 {
-                    z.state_chase = true;
-                }
-                if !z.state_chase {
-                    z.wander_timer -= dt;
-                    if z.wander_timer <= 0.0 {
-                        z.wander_angle = rand::thread_rng().gen_range(0.0..TAU);
-                        z.wander_timer = rand::thread_rng().gen_range(0.6..2.2);
+        if !hunting {
+            // Idle: shuffle about aimlessly until it detects the player.
+            z.wander_timer -= dt;
+            if z.wander_timer <= 0.0 {
+                z.wander_angle = rand::thread_rng().gen_range(0.0..TAU);
+                z.wander_timer = rand::thread_rng().gen_range(0.8..2.6);
+            }
+            tvel = Vec2::new(z.wander_angle.cos(), z.wander_angle.sin()) * spd * 0.3;
+        } else {
+            match z.pattern {
+                Pattern::Ranged => {
+                    let a = chase_heading.y.atan2(chase_heading.x);
+                    let tr = z.turn_rate;
+                    z.angle = angle_lerp(z.angle, a, (dt * tr).clamp(0.0, 1.0));
+                    let ideal = 190.0;
+                    if d > ideal + 40.0 {
+                        tvel = chase_heading * spd;
+                    } else if d < ideal - 40.0 {
+                        tvel = -chase_heading * spd * 0.7;
+                    } else {
+                        let perp = Vec2::new(-chase_heading.y, chase_heading.x);
+                        tvel = perp * spd * 0.5 * z.flank;
                     }
-                    tvel = Vec2::new(z.wander_angle.cos(), z.wander_angle.sin()) * spd * 0.4;
-                } else {
-                    tvel = shamble(&z, heading, spd);
+                    z.spit_cd -= dt;
+                    if z.spit_cd <= 0.0 && d < 340.0 {
+                        z.spit_cd = rand::thread_rng().gen_range(2.2..3.6);
+                        spit_ev.write(SpitEvent { pos, angle: a });
+                    }
                 }
-            }
-            Pattern::Ranged => {
-                let a = to.y.atan2(to.x);
-                let tr = z.turn_rate;
-                z.angle = angle_lerp(z.angle, a, (dt * tr).clamp(0.0, 1.0));
-                let ideal = 190.0;
-                if d > ideal + 40.0 {
-                    tvel = heading * spd;
-                } else if d < ideal - 40.0 {
-                    tvel = -heading * spd * 0.7;
-                } else {
-                    let perp = Vec2::new(-heading.y, heading.x);
-                    tvel = perp * spd * 0.5 * z.flank;
+                _ => {
+                    tvel = shamble(&z, chase_heading, spd);
                 }
-                z.spit_cd -= dt;
-                if z.spit_cd <= 0.0 && d < 340.0 {
-                    z.spit_cd = rand::thread_rng().gen_range(2.2..3.6);
-                    spit_ev.write(SpitEvent { pos, angle: a });
-                }
-            }
-            Pattern::Direct => {
-                tvel = shamble(&z, heading, spd);
             }
         }
 
