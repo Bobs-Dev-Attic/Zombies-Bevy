@@ -485,6 +485,7 @@ pub fn start_game(
 
     let world = generate_world();
     spawn_world_sprites(&mut commands, &world, &art.soft);
+    crate::world::spawn_props(&mut commands, &world, &art);
     let spawn = world.spawn;
     // Scatter starter gear before we hand the world to the ECS as a resource.
     crate::gear::scatter_pickups(&mut commands, &art, &world, spawn);
