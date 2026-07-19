@@ -288,8 +288,13 @@ pub fn player_update(
     time: Res<Time>,
     input: Res<InputState>,
     world: Res<World>,
+    driving: Res<crate::vehicle::Driving>,
     mut q: Query<(&mut Player, &mut Transform)>,
 ) {
+    // While driving, the vehicle system owns the player's position and heading.
+    if driving.active() {
+        return;
+    }
     let dt = time.delta_secs();
     let Ok((mut p, mut tf)) = q.single_mut() else {
         return;

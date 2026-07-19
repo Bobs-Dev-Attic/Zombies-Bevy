@@ -4,6 +4,29 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.29.0]
+
+### Added
+- **Drive the cars!** Walk up to any car or van and a **PRESS E - DRIVE** prompt
+  appears; press **E** (or tap the on-screen button on mobile) and the **doors
+  swing open** and you climb in. Steer with the movement keys/stick — the car
+  accelerates, curves toward where you point, and **plows through the horde**,
+  flinging zombies and running them down at speed. Press **E** again to get out.
+  You're shielded from the horde while you're behind the wheel.
+- **Structured streets (step 2)** — the endless world now lays out from templates:
+  **parked cars line the curbs** on Streets, and each house in the Neighborhood
+  gets a **driveway with a car** on it, so places read like places instead of
+  random scatter.
+
+### Changed
+- **Much bigger, more detailed vehicles** — cars and vans are scaled up to true
+  proportions with **door seams, handles, windshields, roof highlights, head- and
+  tail-lights**, and a shadow that travels with them when driven.
+
+### Controls
+- **E** now means *interact / enter-exit a vehicle* (weapon cycling moved to **Q**
+  and the mouse wheel; number keys still select weapons directly).
+
 ## [0.28.0]
 
 ### Added

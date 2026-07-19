@@ -480,6 +480,7 @@ fn spark_burst(commands: &mut Commands, pos: Vec2, dir: f32) {
 pub fn firing_system(
     time: Res<Time>,
     input: Res<InputState>,
+    driving: Res<crate::vehicle::Driving>,
     mut latch: ResMut<FireLatch>,
     mut shake: ResMut<Shake>,
     mut noise: ResMut<crate::enemy::Noise>,
@@ -489,6 +490,11 @@ pub fn firing_system(
     mut props: Query<(&mut crate::world::PropObj, &Transform), (Without<Player>, Without<Zombie>)>,
 ) {
     let _ = time;
+    // No shooting from behind the wheel.
+    if driving.active() {
+        latch.0 = input.fire;
+        return;
+    }
     let Ok((mut p, tf)) = q.single_mut() else {
         return;
     };

@@ -9,6 +9,7 @@ mod hud;
 mod input;
 mod nav;
 mod player;
+mod vehicle;
 mod weapons;
 mod world;
 
@@ -49,6 +50,7 @@ fn main() {
         .init_resource::<hud::HurtFx>()
         .init_resource::<hud::Concussion>()
         .init_resource::<nav::Objective>()
+        .init_resource::<vehicle::Driving>()
         .init_resource::<Zoom>()
         .init_resource::<Settings>()
         .add_event::<enemy::SpitEvent>()
@@ -117,7 +119,13 @@ fn main() {
                 gear::pickup_collect,
                 gear::pickup_spawn_over_time,
                 gear::pickup_icon_bob,
-                camera::camera_follow,
+                (
+                    vehicle::vehicle_interact,
+                    vehicle::vehicle_drive,
+                    vehicle::vehicle_door_anim,
+                    vehicle::vehicle_prompt,
+                    camera::camera_follow,
+                ),
                 hud::update_hud,
                 (hud::update_hurt_fx, hud::update_concussion),
                 hud::update_touch_controls,
