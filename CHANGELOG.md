@@ -4,6 +4,21 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.23.0]
+
+### Added
+- **Scenes** — each run now generates one of three environments, shown by name on
+  the HUD:
+  - **Downtown Streets** — scattered buildings for cover (the classic arena).
+  - **City Park** — open **green grass**, dense with trees, bushes and benches,
+    a couple of small sheds.
+  - **The Neighborhood** — a grid of **houses** (walled rooms with a door you can
+    enter) lined with parked cars, yards and furniture.
+- Prop mixes are weighted per scene (a park is mostly trees/bushes; the
+  neighborhood has cars and furniture) and furniture can now sit **inside** rooms.
+
+_Third slice of the batch. Zombie dogs & cats are next._
+
 ## [0.22.0]
 
 ### Added
