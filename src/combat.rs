@@ -428,6 +428,7 @@ pub fn firing_system(
     input: Res<InputState>,
     mut latch: ResMut<FireLatch>,
     mut shake: ResMut<Shake>,
+    mut noise: ResMut<crate::enemy::Noise>,
     mut commands: Commands,
     mut q: Query<(&mut Player, &Transform)>,
     mut zombies: Query<(&mut Zombie, &Transform)>,
@@ -453,6 +454,17 @@ pub fn firing_system(
     }
 
     p.cooldown = 1.0 / w.rate;
+
+    // Noise draws zombies in: loud guns carry far, melee is silent.
+    let loud = match w.kind {
+        WeaponKind::Melee => 0.0,
+        WeaponKind::Flamethrower => 220.0,
+        WeaponKind::Pistol | WeaponKind::Smg => 420.0,
+        WeaponKind::Shotgun | WeaponKind::Sxs | WeaponKind::Magnum => 520.0,
+        WeaponKind::Rifle => 560.0,
+        WeaponKind::Launcher => 820.0,
+    };
+    noise.level = noise.level.max(loud);
 
     let angle = p.angle;
     // Muzzle sits at each weapon's barrel tip (the rifle's barrel reaches well
