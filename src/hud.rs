@@ -55,6 +55,12 @@ pub struct JoyKnob;
 pub struct AttackBtn;
 #[derive(Component)]
 pub struct SwapBtn;
+/// The "get in / get out of the car" button (mobile) — shown only near a vehicle.
+#[derive(Component)]
+pub struct InteractBtn;
+/// Desktop hint text ("PRESS E — DRIVE") shown near a vehicle or while driving.
+#[derive(Component)]
+pub struct InteractPrompt;
 #[derive(Component)]
 pub struct AmmoText;
 #[derive(Component)]
@@ -717,6 +723,59 @@ fn spawn_hud(commands: &mut Commands, art: &crate::art::Art) {
                 Text::new("SWAP"),
                 TextFont { font_size: 15.0, ..default() },
                 TextColor(Color::srgba(0.95, 0.97, 1.0, 0.85)),
+            ));
+        });
+    // Interact button (mobile) — get in / out of a vehicle. Hidden until near one.
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(BTN_R * 2.0),
+                height: Val::Px(BTN_R * 2.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                display: Display::None,
+                ..default()
+            },
+            ImageNode {
+                image: art.circle.clone(),
+                color: Color::srgba(0.3, 0.75, 0.45, 0.4),
+                ..default()
+            },
+            GlobalZIndex(60),
+            InteractBtn,
+            Cleanup,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new("DRIVE"),
+                TextFont { font_size: 16.0, ..default() },
+                TextColor(Color::srgba(0.95, 1.0, 0.95, 0.9)),
+                crate::vehicle::InteractBtnText,
+            ));
+        });
+    // Desktop prompt (bottom-centre): "PRESS  E  —  DRIVE".
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(70.0),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                justify_content: JustifyContent::Center,
+                display: Display::None,
+                ..default()
+            },
+            GlobalZIndex(29),
+            InteractPrompt,
+            Cleanup,
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text::new("PRESS  E  -  DRIVE"),
+                TextFont { font_size: 20.0, ..default() },
+                TextColor(Color::srgb(0.55, 0.95, 0.65)),
+                crate::vehicle::InteractPromptText,
             ));
         });
 

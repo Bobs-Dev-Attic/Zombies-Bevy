@@ -36,8 +36,8 @@ pub fn prop_spec(kind: PropKind) -> (f32, bool) {
     match kind {
         PropKind::Tree => (14.0, true),
         PropKind::Bush => (17.0, false),
-        PropKind::Car => (30.0, true),
-        PropKind::Van => (35.0, true),
+        PropKind::Car => (40.0, true),
+        PropKind::Van => (50.0, true),
         PropKind::Bench => (17.0, true),
         PropKind::Dumpster => (21.0, true),
         PropKind::Barrel => (10.0, true),
@@ -235,6 +235,30 @@ impl World {
         }
         p
     }
+
+    /// Detach a driven vehicle from its home chunk: drop its static collider and
+    /// remove it from the chunk's despawn list so streaming won't reclaim it while
+    /// it's being driven around. Returns quietly if the chunk isn't loaded.
+    pub fn detach_vehicle(&mut self, e: Entity, pos: Vec2) {
+        let (gc, gr) = self.world_to_tile(pos);
+        let (key, _) = tile_to_chunk(gc, gr);
+        if let Some(ch) = self.chunks.get_mut(&key) {
+            ch.ents.retain(|&x| x != e);
+            ch.props.retain(|p| {
+                !(matches!(p.kind, PropKind::Car | PropKind::Van) && p.pos.distance(pos) < 4.0)
+            });
+        }
+    }
+
+    /// Re-park a vehicle: drop a fresh static collider at its resting spot so it
+    /// blocks movement again (if that chunk is currently loaded).
+    pub fn park_vehicle(&mut self, pos: Vec2, kind: PropKind, r: f32, angle: f32) {
+        let (gc, gr) = self.world_to_tile(pos);
+        let (key, _) = tile_to_chunk(gc, gr);
+        if let Some(ch) = self.chunks.get_mut(&key) {
+            ch.props.push(Prop { kind, pos, r, solid: true, angle });
+        }
+    }
 }
 
 /// Build the arena for a randomly chosen scene: a downtown street grid, an open
@@ -266,6 +290,9 @@ fn gen_chunk(cx: i32, cy: i32, seed: u64, scene: Scene, spawn: Vec2) -> (Vec<Cel
             cells[ly as usize * cu + lx as usize] = v;
         }
     };
+    // Structured "template" hints filled during layout (step 2): a driveway tile
+    // in front of a house, so a car can be parked on it facing the street.
+    let mut driveway: Option<(i32, i32)> = None;
     match scene {
         Scene::Streets => {
             // Building blocks with margins so roads run between chunks.
@@ -317,6 +344,8 @@ fn gen_chunk(cx: i32, cy: i32, seed: u64, scene: Scene, spawn: Vec2) -> (Vec<Cel
                 }
                 let door = bx + 2 + rng.gen_range(0..(bw - 4).max(1));
                 set(&mut cells, door, by + bh - 1, Cell::Floor);
+                // A driveway two tiles in front of the door (on the street side).
+                driveway = Some((door, (by + bh + 1).min(CHUNK - 2)));
             }
         }
     }
@@ -350,14 +379,67 @@ fn gen_chunk(cx: i32, cy: i32, seed: u64, scene: Scene, spawn: Vec2) -> (Vec<Cel
     };
     let want = match scene {
         Scene::Park => 9,
-        Scene::Neighborhood => 6,
-        Scene::Streets => 6,
+        Scene::Neighborhood => 9,
+        Scene::Streets => 9,
     };
     let solid_at = |cells: &Vec<Cell>, lx: i32, ly: i32| -> bool {
         lx < 0 || ly < 0 || lx >= CHUNK || ly >= CHUNK
             || cells[ly as usize * cu + lx as usize] == Cell::Wall
     };
     let mut props: Vec<Prop> = Vec::new();
+
+    // --- Structured template placements (step 2): parked cars line the curb and
+    // sit on driveways, so streets and neighborhoods read as real places rather
+    // than random scatter. Deterministic per chunk. ---
+    let tile_pos = |lx: i32, ly: i32| -> Vec2 {
+        let gc = cx * CHUNK + lx;
+        let gr = cy * CHUNK + ly;
+        Vec2::new(gc as f32 * TILE + TILE * 0.5, -(gr as f32 * TILE + TILE * 0.5))
+    };
+    let mut place_car =
+        |props: &mut Vec<Prop>, lx: i32, ly: i32, van: bool, angle: f32| -> bool {
+            if lx < 1 || ly < 1 || lx >= CHUNK - 1 || ly >= CHUNK - 1 {
+                return false;
+            }
+            if solid_at(&cells, lx, ly)
+                || solid_at(&cells, lx + 1, ly)
+                || solid_at(&cells, lx - 1, ly)
+            {
+                return false;
+            }
+            let pos = tile_pos(lx, ly);
+            if pos.distance(spawn) < 130.0 {
+                return false;
+            }
+            if props.iter().any(|p| p.pos.distance(pos) < p.r + 58.0) {
+                return false;
+            }
+            let kind = if van { PropKind::Van } else { PropKind::Car };
+            let (pr, solid) = prop_spec(kind);
+            props.push(Prop { kind, pos, r: pr, solid, angle });
+            true
+        };
+    match scene {
+        Scene::Streets => {
+            // A parking lane along a curb row near the bottom margin.
+            let row = CHUNK - 3;
+            let mut lx = 2;
+            while lx < CHUNK - 2 {
+                if rng.gen_bool(0.55) {
+                    place_car(&mut props, lx, row, rng.gen_bool(0.22), 0.0);
+                }
+                lx += 3;
+            }
+        }
+        Scene::Neighborhood => {
+            if let Some((dx, dy)) = driveway {
+                // Nose pointed at the street (screen-down = -y here).
+                place_car(&mut props, dx, dy, rng.gen_bool(0.3), -std::f32::consts::FRAC_PI_2);
+            }
+        }
+        Scene::Park => {}
+    }
+
     let mut tries = 0;
     while props.len() < want && tries < 120 {
         tries += 1;
@@ -632,27 +714,29 @@ pub fn spawn_prop_entity(commands: &mut Commands, art: &crate::art::Art, prop: P
     {
         let pos = prop.pos;
         let z = depth_z(Z_PROP, pos.y);
-        // Soft cast shadow on the ground.
-        let (sw, sh) = match prop.kind {
-            PropKind::Car => (58.0, 30.0),
-            PropKind::Van => (66.0, 34.0),
-            PropKind::Tree => (44.0, 40.0),
-            _ => (prop.r * 2.6, prop.r * 2.0),
-        };
-        ents.push(
-            commands
-                .spawn((
-                    Sprite {
-                        image: art.soft.clone(),
-                        color: Color::srgba(0.0, 0.0, 0.0, 0.4),
-                        custom_size: Some(Vec2::new(sw, sh)),
-                        ..default()
-                    },
-                    Transform::from_xyz(pos.x + 5.0, pos.y - prop.r * 0.5, Z_DECAL + 4.0),
-                    WorldTile,
-                ))
-                .id(),
-        );
+        let is_vehicle = matches!(prop.kind, PropKind::Car | PropKind::Van);
+        // Soft cast shadow on the ground. Vehicles get a child shadow (below) so
+        // it travels with the car when driven; everything else casts here.
+        if !is_vehicle {
+            let (sw, sh) = match prop.kind {
+                PropKind::Tree => (44.0, 40.0),
+                _ => (prop.r * 2.6, prop.r * 2.0),
+            };
+            ents.push(
+                commands
+                    .spawn((
+                        Sprite {
+                            image: art.soft.clone(),
+                            color: Color::srgba(0.0, 0.0, 0.0, 0.4),
+                            custom_size: Some(Vec2::new(sw, sh)),
+                            ..default()
+                        },
+                        Transform::from_xyz(pos.x + 5.0, pos.y - prop.r * 0.5, Z_DECAL + 4.0),
+                        WorldTile,
+                    ))
+                    .id(),
+            );
+        }
         let (hp, flammable, explodes) = prop_stats(prop.kind);
         let root = commands
             .spawn((
@@ -717,14 +801,31 @@ pub fn spawn_prop_entity(commands: &mut Commands, art: &crate::art::Art, prop: P
             }
             PropKind::Car | PropKind::Van => {
                 let van = prop.kind == PropKind::Van;
-                let len = if van { 78.0 } else { 64.0 };
-                let wid = if van { 32.0 } else { 28.0 };
+                // Bigger, more true-to-scale: a sedan is ~96px long here, a van ~120.
+                let len = if van { 120.0 } else { 96.0 };
+                let wid = if van { 50.0 } else { 42.0 };
+                // Child shadow (travels with the car when it's driven).
+                parts.push({
+                    let s = commands
+                        .spawn((
+                            Sprite {
+                                image: art.soft.clone(),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.4),
+                                custom_size: Some(Vec2::new(len + 14.0, wid + 12.0)),
+                                ..default()
+                            },
+                            Transform::from_xyz(4.0, -3.0, -0.25),
+                        ))
+                        .id();
+                    s
+                });
                 let bodies = [
                     Color::srgb(0.5, 0.15, 0.14),
                     Color::srgb(0.15, 0.28, 0.45),
                     Color::srgb(0.2, 0.22, 0.25),
                     Color::srgb(0.55, 0.5, 0.2),
                     Color::srgb(0.3, 0.35, 0.32),
+                    Color::srgb(0.7, 0.72, 0.75),
                 ];
                 let body = bodies[rng.gen_range(0..bodies.len())];
                 let dark = {
@@ -733,26 +834,56 @@ pub fn spawn_prop_entity(commands: &mut Commands, art: &crate::art::Art, prop: P
                 };
                 // Wheels poking out under the body.
                 let blk = Color::srgb(0.05, 0.05, 0.06);
-                let wx = len * 0.3;
-                let wy = wid * 0.5 + 1.0;
+                let wx = len * 0.32;
+                let wy = wid * 0.5 + 1.5;
                 for (sx, sy) in [(wx, wy), (wx, -wy), (-wx, wy), (-wx, -wy)] {
-                    parts.push(pr_rect(commands, blk, 9.0, 5.0, sx, sy, 0.1));
+                    parts.push(pr_rect(commands, blk, 14.0, 7.0, sx, sy, 0.1));
                 }
                 // Body.
                 parts.push(pr_soft(commands, art, body, len, wid, 0.0, 0.0, 0.3));
+                // Door seams (thin dark lines down the flanks) — two per side.
+                let seam = Color::srgba(0.0, 0.0, 0.0, 0.4);
+                for sx in [len * 0.06, -len * 0.16] {
+                    parts.push(pr_rect(commands, seam, 1.6, wid, sx, 0.0, 0.33));
+                }
+                // Door handles.
+                let handle = Color::srgb(0.75, 0.75, 0.78);
+                for sy in [wid * 0.5 - 2.0, -(wid * 0.5 - 2.0)] {
+                    parts.push(pr_rect(commands, handle, 6.0, 1.6, -len * 0.05, sy, 0.34));
+                }
                 // Cabin / roof.
                 let cab_len = if van { len * 0.5 } else { len * 0.42 };
                 parts.push(pr_soft(commands, art, dark, cab_len, wid * 0.82, if van { -len * 0.12 } else { -2.0 }, 0.0, 0.34));
-                // Windows (dark glass).
+                // Windows (dark glass): windshield + rear.
                 let glass = Color::srgb(0.1, 0.13, 0.17);
                 parts.push(pr_rect(commands, glass, cab_len * 0.44, wid * 0.66, cab_len * 0.28 - if van { len * 0.12 } else { 2.0 }, 0.0, 0.36));
                 if !van {
                     parts.push(pr_rect(commands, glass, cab_len * 0.34, wid * 0.66, -cab_len * 0.34 - 2.0, 0.0, 0.36));
                 }
+                // Roof highlight strip.
+                let hi = {
+                    let s = dark.to_srgba();
+                    Color::srgb((s.red + 0.12).min(1.0), (s.green + 0.12).min(1.0), (s.blue + 0.12).min(1.0))
+                };
+                parts.push(pr_rect(commands, hi, cab_len * 0.8, 2.5, if van { -len * 0.12 } else { -2.0 }, wid * 0.24, 0.37));
                 // Headlights at the front (local +X).
-                let lit = Color::srgb(0.9, 0.88, 0.6);
-                parts.push(pr_rect(commands, lit, 2.5, 3.0, len * 0.5 - 1.5, wid * 0.3, 0.35));
-                parts.push(pr_rect(commands, lit, 2.5, 3.0, len * 0.5 - 1.5, -wid * 0.3, 0.35));
+                let lit = Color::srgb(0.95, 0.92, 0.65);
+                parts.push(pr_round(commands, art, lit, 5.0, 5.0, len * 0.5 - 2.5, wid * 0.3, 0.35));
+                parts.push(pr_round(commands, art, lit, 5.0, 5.0, len * 0.5 - 2.5, -wid * 0.3, 0.35));
+                // Tail lights (rear, red).
+                let tail = Color::srgb(0.7, 0.12, 0.1);
+                parts.push(pr_rect(commands, tail, 3.0, 5.0, -len * 0.5 + 1.5, wid * 0.32, 0.35));
+                parts.push(pr_rect(commands, tail, 3.0, 5.0, -len * 0.5 + 1.5, -wid * 0.32, 0.35));
+                // Mark it drivable.
+                commands.entity(root).insert(crate::vehicle::Vehicle {
+                    kind: prop.kind,
+                    heading: prop.angle,
+                    speed: 0.0,
+                    r: prop.r,
+                    half_len: len * 0.5,
+                    half_wid: wid * 0.5,
+                    occupied: false,
+                });
             }
             PropKind::Bench => {
                 let wood = Color::srgb(0.35, 0.22, 0.12);

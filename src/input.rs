@@ -13,6 +13,7 @@ pub struct InputState {
     pub fire: bool,
     pub reload: bool,
     pub throw: bool,
+    pub interact: bool, // enter/exit a vehicle (rising edge)
     pub next_weapon: bool,
     pub prev_weapon: bool,
     pub weapon_slot: Option<usize>,
@@ -25,6 +26,8 @@ pub struct InputState {
     pub attack_down: bool,    // attack button held (for the pressed look)
     pub swap_center: Vec2,    // screen-space centre of the weapon-swap button
     pub swap_down: bool,      // swap button touched this frame (pressed look)
+    pub interact_center: Vec2, // screen-space centre of the enter/exit button
+    pub interact_down: bool,   // interact button touched this frame (pressed look)
 }
 
 /// Layout constants for the on-screen controls (screen pixels).
@@ -46,6 +49,7 @@ pub fn gather_input(
     camera_q: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     mut prev_touch: Local<bool>,
     mut prev_swap: Local<bool>,
+    mut prev_interact: Local<bool>,
     mut input: ResMut<InputState>,
 ) {
     *input = InputState::default();
@@ -82,10 +86,13 @@ pub fn gather_input(
     let attack_center = Vec2::new(w - 28.0 - BTN_R, h - 28.0 - BTN_R);
     // Weapon-swap button sits just above the fire button.
     let swap_center = Vec2::new(attack_center.x, attack_center.y - BTN_R - SWAP_R - 22.0);
+    // Enter/exit-vehicle button sits to the left of the fire button.
+    let interact_center = Vec2::new(attack_center.x - BTN_R * 2.0 - 26.0, attack_center.y);
     input.joy_base = joy_base;
     input.knob = joy_base;
     input.attack_center = attack_center;
     input.swap_center = swap_center;
+    input.interact_center = interact_center;
 
     // ---- Mouse aim + fire (desktop) ----
     if let (Some(window), Some((camera, cam_tf))) = (window, cam) {
@@ -119,6 +126,9 @@ pub fn gather_input(
         } else if p.distance(swap_center) < SWAP_R + 20.0 {
             // Weapon-swap button.
             input.swap_down = true;
+        } else if p.distance(interact_center) < BTN_R + 20.0 {
+            // Enter/exit-vehicle button.
+            input.interact_down = true;
         } else {
             // Movement joystick (anywhere else on screen drives it).
             let mut off = p - joy_base;
@@ -148,7 +158,8 @@ pub fn gather_input(
     // ---- Discrete keys ----
     input.reload = keys.just_pressed(KeyCode::KeyR);
     input.throw = keys.just_pressed(KeyCode::KeyG) || keys.just_pressed(KeyCode::KeyF);
-    input.next_weapon = keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::KeyQ);
+    input.interact = keys.just_pressed(KeyCode::KeyE);
+    input.next_weapon = keys.just_pressed(KeyCode::KeyQ);
     // Mouse scroll wheel cycles weapons: scroll down → next, scroll up → previous.
     let scroll: f32 = wheel.read().map(|e| e.y).sum();
     if scroll < -0.01 {
@@ -182,4 +193,10 @@ pub fn gather_input(
         input.next_weapon = true;
     }
     *prev_swap = input.swap_down;
+
+    // Tapping the mobile interact button enters/exits a vehicle (rising edge).
+    if input.interact_down && !*prev_interact {
+        input.interact = true;
+    }
+    *prev_interact = input.interact_down;
 }
