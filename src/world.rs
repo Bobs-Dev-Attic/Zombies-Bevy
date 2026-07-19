@@ -1,6 +1,11 @@
 use crate::common::*;
+use crate::player::Player;
 use bevy::prelude::*;
-use rand::Rng;
+use bevy::render::render_asset::RenderAssetUsages;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Cell {
@@ -108,52 +113,84 @@ impl Scene {
 #[derive(Resource, Default)]
 pub struct SceneChoice(pub Option<Scene>);
 
+/// Side length of a streaming chunk, in tiles.
+pub const CHUNK: i32 = 20;
+/// Chunks kept loaded out from the player's chunk — a (2R+1)² window.
+pub const CHUNK_R: i32 = 2;
+
+/// One loaded piece of the endless map.
+pub struct Chunk {
+    pub cells: Vec<Cell>,  // CHUNK*CHUNK, row-major local tiles
+    pub props: Vec<Prop>,  // world-space colliders
+    pub ents: Vec<Entity>, // spawned visuals, despawned when the chunk unloads
+}
+
+/// The world is an infinite grid of chunks streamed in around the player.
 #[derive(Resource)]
 pub struct World {
-    pub cols: usize,
-    pub rows: usize,
-    pub cells: Vec<Cell>,
-    pub spawn: Vec2,
-    pub props: Vec<Prop>,
+    pub seed: u64,
     pub scene: Scene,
+    pub spawn: Vec2,
+    pub chunks: HashMap<(i32, i32), Chunk>,
+}
+
+/// Global tile → (chunk key, local index within that chunk).
+#[inline]
+fn tile_to_chunk(gc: i32, gr: i32) -> ((i32, i32), usize) {
+    let cx = gc.div_euclid(CHUNK);
+    let cy = gr.div_euclid(CHUNK);
+    let lx = gc.rem_euclid(CHUNK) as usize;
+    let ly = gr.rem_euclid(CHUNK) as usize;
+    ((cx, cy), ly * CHUNK as usize + lx)
 }
 
 impl World {
-    pub fn at(&self, c: isize, r: usize) -> Cell {
-        if c < 0 || r >= self.rows || c as usize >= self.cols {
-            return Cell::Wall;
-        }
-        self.cells[r * self.cols + c as usize]
-    }
-    pub fn solid(&self, c: isize, r: isize) -> bool {
-        if c < 0 || r < 0 || c as usize >= self.cols || r as usize >= self.rows {
-            return true;
-        }
-        self.cells[r as usize * self.cols + c as usize] == Cell::Wall
+    pub fn world_to_tile(&self, p: Vec2) -> (i32, i32) {
+        ((p.x / TILE).floor() as i32, (-p.y / TILE).floor() as i32)
     }
 
     /// Center of a tile in world coordinates.
-    pub fn tile_center(&self, c: usize, r: usize) -> Vec2 {
-        Vec2::new(c as f32 * TILE + TILE * 0.5, -(r as f32 * TILE + TILE * 0.5))
+    pub fn tile_center(&self, gc: i32, gr: i32) -> Vec2 {
+        Vec2::new(gc as f32 * TILE + TILE * 0.5, -(gr as f32 * TILE + TILE * 0.5))
     }
 
-    pub fn world_to_tile(&self, p: Vec2) -> (isize, isize) {
-        ((p.x / TILE).floor() as isize, (-p.y / TILE).floor() as isize)
+    /// Is this tile a wall? Tiles in not-yet-loaded chunks read as open floor
+    /// (they're always beyond the player's reach until they load).
+    pub fn solid(&self, gc: i32, gr: i32) -> bool {
+        let (key, idx) = tile_to_chunk(gc, gr);
+        match self.chunks.get(&key) {
+            Some(ch) => ch.cells[idx] == Cell::Wall,
+            None => false,
+        }
     }
 
-    /// Is this world point inside a solid tile or a solid prop? (used by
-    /// projectiles, flames, casings and rolling grenades)
+    /// Copy of all props in the chunk containing `p` and its 8 neighbours.
+    fn near_props(&self, p: Vec2) -> Vec<Prop> {
+        let (gc, gr) = self.world_to_tile(p);
+        let ((cx, cy), _) = tile_to_chunk(gc, gr);
+        let mut out = Vec::new();
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if let Some(ch) = self.chunks.get(&(cx + dx, cy + dy)) {
+                    out.extend(ch.props.iter().copied());
+                }
+            }
+        }
+        out
+    }
+
+    /// Inside a solid tile or a solid prop? (projectiles, flames, casings, grenades)
     pub fn blocks_point(&self, p: Vec2) -> bool {
-        let (c, r) = self.world_to_tile(p);
-        if self.solid(c, r) {
+        let (gc, gr) = self.world_to_tile(p);
+        if self.solid(gc, gr) {
             return true;
         }
-        self.props
+        self.near_props(p)
             .iter()
             .any(|pr| pr.solid && p.distance(pr.pos) < pr.r)
     }
 
-    /// Push a circle out of any solid tiles it overlaps. Returns resolved center.
+    /// Push a circle out of any solid tiles / props it overlaps.
     pub fn collide(&self, mut p: Vec2, radius: f32) -> Vec2 {
         let (cc, cr) = self.world_to_tile(p);
         for r in (cr - 1)..=(cr + 1) {
@@ -161,7 +198,6 @@ impl World {
                 if !self.solid(c, r) {
                     continue;
                 }
-                // Tile AABB.
                 let min = Vec2::new(c as f32 * TILE, -((r as f32 + 1.0) * TILE));
                 let max = Vec2::new((c as f32 + 1.0) * TILE, -(r as f32 * TILE));
                 let closest = p.clamp(min, max);
@@ -171,7 +207,6 @@ impl World {
                     if d > 0.0001 {
                         p += delta / d * (radius - d);
                     } else {
-                        // Center is inside the tile; push out along the shallowest axis.
                         let dx = (p.x - min.x).min(max.x - p.x);
                         let dy = (p.y - min.y).min(max.y - p.y);
                         if dx < dy {
@@ -183,8 +218,7 @@ impl World {
                 }
             }
         }
-        // Push out of any solid props (circle-vs-circle).
-        for prop in &self.props {
+        for prop in self.near_props(p) {
             if !prop.solid {
                 continue;
             }
@@ -205,184 +239,143 @@ impl World {
 
 /// Build the arena for a randomly chosen scene: a downtown street grid, an open
 /// city park, or a house-lined neighborhood — each with its own walls and props.
-pub fn generate_world(choice: Option<Scene>) -> World {
-    let cols = 46usize;
-    let rows = 34usize;
-    let mut cells = vec![Cell::Floor; cols * rows];
-    let mut set = |cells: &mut Vec<Cell>, c: usize, r: usize, v: Cell| {
-        if c < cols && r < rows {
-            cells[r * cols + c] = v;
-        }
-    };
-    // Border walls.
-    for c in 0..cols {
-        set(&mut cells, c, 0, Cell::Wall);
-        set(&mut cells, c, rows - 1, Cell::Wall);
-    }
-    for r in 0..rows {
-        set(&mut cells, 0, r, Cell::Wall);
-        set(&mut cells, cols - 1, r, Cell::Wall);
-    }
+/// Create a fresh streaming world (no chunks loaded yet).
+pub fn new_world(choice: Option<Scene>) -> World {
     let mut rng = rand::thread_rng();
-    let center = (cols / 2, rows / 2);
     let scene = choice.unwrap_or_else(|| {
         *[Scene::Streets, Scene::Park, Scene::Neighborhood]
             .get(rng.gen_range(0..3))
             .unwrap()
     });
+    let seed: u64 = rng.gen();
+    // Spawn at the centre of chunk (0,0).
+    let spawn = Vec2::new(CHUNK as f32 * TILE * 0.5, -(CHUNK as f32 * TILE * 0.5));
+    World { seed, scene, spawn, chunks: HashMap::new() }
+}
 
+/// Deterministic per-chunk generation of wall cells + prop colliders.
+fn gen_chunk(cx: i32, cy: i32, seed: u64, scene: Scene, spawn: Vec2) -> (Vec<Cell>, Vec<Prop>) {
+    let cu = CHUNK as usize;
+    let mut cells = vec![Cell::Floor; cu * cu];
+    let h = seed
+        ^ (cx as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (cy as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    let mut rng = StdRng::seed_from_u64(h);
+    let set = |cells: &mut Vec<Cell>, lx: i32, ly: i32, v: Cell| {
+        if lx >= 0 && ly >= 0 && lx < CHUNK && ly < CHUNK {
+            cells[ly as usize * cu + lx as usize] = v;
+        }
+    };
     match scene {
         Scene::Streets => {
-            // Scattered rectangular buildings/crates with occasional doorway gaps.
-            let blocks: [(usize, usize, usize, usize); 10] = [
-                (5, 4, 6, 4),
-                (34, 5, 6, 5),
-                (6, 24, 7, 5),
-                (33, 25, 7, 4),
-                (20, 3, 5, 3),
-                (19, 27, 6, 3),
-                (3, 14, 3, 6),
-                (40, 15, 3, 6),
-                (14, 12, 4, 3),
-                (28, 18, 4, 3),
-            ];
-            for (bx, by, bw, bh) in blocks {
-                for r in by..(by + bh) {
-                    for c in bx..(bx + bw) {
+            // Building blocks with margins so roads run between chunks.
+            for _ in 0..rng.gen_range(1..=2) {
+                let bw = rng.gen_range(4..8);
+                let bh = rng.gen_range(3..6);
+                let bx = rng.gen_range(3..(CHUNK - 3 - bw).max(4));
+                let by = rng.gen_range(3..(CHUNK - 3 - bh).max(4));
+                for ry in by..(by + bh) {
+                    for rx in bx..(bx + bw) {
                         if rng.gen_bool(0.12) {
                             continue;
                         }
-                        set(&mut cells, c, r, Cell::Wall);
+                        set(&mut cells, rx, ry, Cell::Wall);
                     }
                 }
             }
         }
         Scene::Park => {
-            // Mostly open green space with a couple of small sheds/restrooms for
-            // cover — the trees and bushes (props) do the rest.
-            let sheds: [(usize, usize, usize, usize); 3] = [
-                (7, 6, 4, 3),
-                (34, 7, 4, 3),
-                (20, 26, 5, 3),
-            ];
-            for (bx, by, bw, bh) in sheds {
-                for r in by..(by + bh) {
-                    for c in bx..(bx + bw) {
+            if rng.gen_bool(0.35) {
+                let bw = rng.gen_range(3..5);
+                let bh = rng.gen_range(3..4);
+                let bx = rng.gen_range(3..(CHUNK - 3 - bw).max(4));
+                let by = rng.gen_range(3..(CHUNK - 3 - bh).max(4));
+                for ry in by..(by + bh) {
+                    for rx in bx..(bx + bw) {
                         if rng.gen_bool(0.15) {
                             continue;
                         }
-                        set(&mut cells, c, r, Cell::Wall);
+                        set(&mut cells, rx, ry, Cell::Wall);
                     }
                 }
             }
         }
         Scene::Neighborhood => {
-            // A loose grid of houses: hollow wall rings with a door gap, streets
-            // running between them.
-            let houses: [(usize, usize, usize, usize); 6] = [
-                (4, 4, 8, 6),
-                (18, 4, 8, 6),
-                (34, 5, 8, 6),
-                (5, 22, 8, 6),
-                (20, 24, 8, 6),
-                (34, 22, 8, 6),
-            ];
-            for (bx, by, bw, bh) in houses {
-                // Walls around the perimeter of the house.
-                for c in bx..(bx + bw) {
-                    set(&mut cells, c, by, Cell::Wall);
-                    set(&mut cells, c, by + bh - 1, Cell::Wall);
+            // A house: a wall ring with a door on the front (bottom) wall.
+            if rng.gen_bool(0.85) {
+                let bw = rng.gen_range(7..10);
+                let bh = rng.gen_range(6..8);
+                let bx = rng.gen_range(2..(CHUNK - 2 - bw).max(3));
+                let by = rng.gen_range(2..(CHUNK - 2 - bh).max(3));
+                for rx in bx..(bx + bw) {
+                    set(&mut cells, rx, by, Cell::Wall);
+                    set(&mut cells, rx, by + bh - 1, Cell::Wall);
                 }
-                for r in by..(by + bh) {
-                    set(&mut cells, bx, r, Cell::Wall);
-                    set(&mut cells, bx + bw - 1, r, Cell::Wall);
+                for ry in by..(by + bh) {
+                    set(&mut cells, bx, ry, Cell::Wall);
+                    set(&mut cells, bx + bw - 1, ry, Cell::Wall);
                 }
-                // Punch a door gap on the front (bottom) wall.
-                let door = bx + 2 + rng.gen_range(0..bw.saturating_sub(4).max(1));
+                let door = bx + 2 + rng.gen_range(0..(bw - 4).max(1));
                 set(&mut cells, door, by + bh - 1, Cell::Floor);
             }
         }
     }
 
-    // Guarantee the spawn area is clear.
-    for r in (center.1 - 2)..=(center.1 + 2) {
-        for c in (center.0 - 2)..=(center.0 + 2) {
-            set(&mut cells, c, r, Cell::Floor);
+    // Keep the spawn area clear (only affects the spawn chunk).
+    let (sc, sr) = ((spawn.x / TILE).floor() as i32, (-spawn.y / TILE).floor() as i32);
+    for gr in (sr - 3)..=(sr + 3) {
+        for gc in (sc - 3)..=(sc + 3) {
+            if gc.div_euclid(CHUNK) == cx && gr.div_euclid(CHUNK) == cy {
+                set(&mut cells, gc.rem_euclid(CHUNK), gr.rem_euclid(CHUNK), Cell::Floor);
+            }
         }
     }
-    let spawn = Vec2::new(
-        center.0 as f32 * TILE + TILE * 0.5,
-        -(center.1 as f32 * TILE + TILE * 0.5),
-    );
-    let mut world = World { cols, rows, cells, spawn, props: Vec::new(), scene };
 
-    // Scatter scenery, weighted to fit the scene — a park is mostly trees and
-    // bushes, a neighborhood has cars and furniture, downtown a mix.
+    // Scatter props onto open floor.
     let kinds: &[PropKind] = match scene {
         Scene::Park => &[
-            PropKind::Tree,
-            PropKind::Tree,
-            PropKind::Tree,
-            PropKind::Bush,
-            PropKind::Bush,
-            PropKind::Bush,
-            PropKind::Bench,
-            PropKind::Bench,
-            PropKind::Barrel,
-            PropKind::Hydrant,
+            PropKind::Tree, PropKind::Tree, PropKind::Bush, PropKind::Bush,
+            PropKind::Bench, PropKind::Barrel, PropKind::Hydrant,
         ],
         Scene::Neighborhood => &[
-            PropKind::Car,
-            PropKind::Car,
-            PropKind::Van,
-            PropKind::Bush,
-            PropKind::Bush,
-            PropKind::Tree,
-            PropKind::Bench,
-            PropKind::Sofa,
-            PropKind::Table,
-            PropKind::Crate,
-            PropKind::Dumpster,
-            PropKind::Hydrant,
+            PropKind::Car, PropKind::Car, PropKind::Van, PropKind::Bush, PropKind::Tree,
+            PropKind::Bench, PropKind::Sofa, PropKind::Table, PropKind::Crate,
+            PropKind::Dumpster, PropKind::Hydrant,
         ],
         Scene::Streets => &[
-            PropKind::Tree,
-            PropKind::Bush,
-            PropKind::Bush,
-            PropKind::Car,
-            PropKind::Van,
-            PropKind::Bench,
-            PropKind::Dumpster,
-            PropKind::Barrel,
-            PropKind::Crate,
-            PropKind::Hydrant,
-            PropKind::Table,
-            PropKind::Sofa,
+            PropKind::Tree, PropKind::Bush, PropKind::Car, PropKind::Van, PropKind::Bench,
+            PropKind::Dumpster, PropKind::Barrel, PropKind::Crate, PropKind::Hydrant,
+            PropKind::Table, PropKind::Sofa,
         ],
     };
     let want = match scene {
-        Scene::Park => 46,
-        Scene::Neighborhood => 40,
-        Scene::Streets => 36,
+        Scene::Park => 9,
+        Scene::Neighborhood => 6,
+        Scene::Streets => 6,
     };
-    let mut attempts = 0;
-    while world.props.len() < want && attempts < 1400 {
-        attempts += 1;
-        let c = rng.gen_range(2..cols - 2);
-        let r = rng.gen_range(2..rows - 2);
-        let pos = world.tile_center(c, r);
-        if pos.distance(spawn) < 150.0 {
+    let solid_at = |cells: &Vec<Cell>, lx: i32, ly: i32| -> bool {
+        lx < 0 || ly < 0 || lx >= CHUNK || ly >= CHUNK
+            || cells[ly as usize * cu + lx as usize] == Cell::Wall
+    };
+    let mut props: Vec<Prop> = Vec::new();
+    let mut tries = 0;
+    while props.len() < want && tries < 120 {
+        tries += 1;
+        let lx = rng.gen_range(1..CHUNK - 1);
+        let ly = rng.gen_range(1..CHUNK - 1);
+        let gc = cx * CHUNK + lx;
+        let gr = cy * CHUNK + ly;
+        let pos = Vec2::new(gc as f32 * TILE + TILE * 0.5, -(gr as f32 * TILE + TILE * 0.5));
+        if pos.distance(spawn) < 130.0 {
             continue;
         }
         let kind = kinds[rng.gen_range(0..kinds.len())];
         let (pr, solid) = prop_spec(kind);
-        // Big props need a clear 3x3; small furniture only needs its own tile
-        // clear (so a sofa or table can sit inside a house room).
         let ok = if pr > 16.0 {
             let mut clear = true;
-            'chk: for dr in -1..=1 {
-                for dc in -1..=1 {
-                    if world.solid(c as isize + dc, r as isize + dr) {
+            'chk: for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if solid_at(&cells, lx + dx, ly + dy) {
                         clear = false;
                         break 'chk;
                     }
@@ -390,24 +383,204 @@ pub fn generate_world(choice: Option<Scene>) -> World {
             }
             clear
         } else {
-            !world.solid(c as isize, r as isize)
+            !solid_at(&cells, lx, ly)
         };
         if !ok {
             continue;
         }
-        // Don't overlap another prop.
-        if world
-            .props
-            .iter()
-            .any(|p| p.pos.distance(pos) < p.r + pr + 14.0)
-        {
+        if props.iter().any(|p| p.pos.distance(pos) < p.r + pr + 14.0) {
             continue;
         }
         let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-        world.props.push(Prop { kind, pos, r: pr, solid, angle });
+        props.push(Prop { kind, pos, r: pr, solid, angle });
     }
+    (cells, props)
+}
 
-    world
+/// Bake a chunk's ground into one small texture (one sprite per chunk floor).
+fn chunk_floor_image(images: &mut Assets<Image>, scene: Scene) -> Handle<Image> {
+    let px = 4u32; // pixels per tile
+    let side = CHUNK as u32 * px;
+    let mut data = vec![0u8; (side * side * 4) as usize];
+    let mut rng = rand::thread_rng();
+    let grass = scene == Scene::Park;
+    for ly in 0..CHUNK as u32 {
+        for lx in 0..CHUNK as u32 {
+            let j = rng.gen_range(-0.02f32..0.02);
+            let warm = rng.gen_range(-0.008f32..0.012);
+            let (rr, gg, bb) = if grass {
+                (0.13 + j + warm, 0.24 + j, 0.13 + j)
+            } else {
+                let base = 0.27 + j;
+                (base + warm, base, base + 0.015)
+            };
+            let br = (rr.clamp(0.0, 1.0) * 255.0) as u8;
+            let bg = (gg.clamp(0.0, 1.0) * 255.0) as u8;
+            let bl = (bb.clamp(0.0, 1.0) * 255.0) as u8;
+            for dy in 0..px {
+                for dx in 0..px {
+                    let seam = dx == 0 || dy == 0; // faint grid line
+                    let (cr, cg, cb) = if seam {
+                        ((br as f32 * 0.8) as u8, (bg as f32 * 0.8) as u8, (bl as f32 * 0.8) as u8)
+                    } else {
+                        (br, bg, bl)
+                    };
+                    let x = lx * px + dx;
+                    let y = ly * px + dy;
+                    let i = ((y * side + x) * 4) as usize;
+                    data[i] = cr;
+                    data[i + 1] = cg;
+                    data[i + 2] = cb;
+                    data[i + 3] = 255;
+                }
+            }
+        }
+    }
+    images.add(Image::new(
+        Extent3d { width: side, height: side, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    ))
+}
+
+/// Spawn the sprites for one wall tile (shadow, body, top lip, bottom edge).
+fn spawn_wall_tile(commands: &mut Commands, soft: &Handle<Image>, center: Vec2) -> Vec<Entity> {
+    let mut rng = rand::thread_rng();
+    let shade = rng.gen_range(-0.02..0.02);
+    let wz = depth_z(Z_PROP, center.y);
+    vec![
+        commands
+            .spawn((
+                Sprite {
+                    image: soft.clone(),
+                    color: Color::srgba(0.0, 0.0, 0.0, 0.42),
+                    custom_size: Some(Vec2::new(TILE * 1.25, TILE * 0.85)),
+                    ..default()
+                },
+                Transform::from_xyz(center.x + 5.0, center.y - TILE * 0.42, Z_DECAL + 5.0),
+                WorldTile,
+            ))
+            .id(),
+        commands
+            .spawn((
+                Sprite::from_color(Color::srgb(0.17 + shade, 0.18 + shade, 0.22 + shade), Vec2::splat(TILE)),
+                Transform::from_xyz(center.x, center.y, wz),
+                WorldTile,
+            ))
+            .id(),
+        commands
+            .spawn((
+                Sprite::from_color(Color::srgb(0.30, 0.31, 0.37), Vec2::new(TILE, 7.0)),
+                Transform::from_xyz(center.x, center.y + TILE * 0.5 - 3.5, wz + 0.05),
+                WorldTile,
+            ))
+            .id(),
+        commands
+            .spawn((
+                Sprite::from_color(Color::srgb(0.10, 0.10, 0.13), Vec2::new(TILE, 4.0)),
+                Transform::from_xyz(center.x, center.y - TILE * 0.5 + 2.0, wz + 0.05),
+                WorldTile,
+            ))
+            .id(),
+    ]
+}
+
+/// Generate + spawn one chunk and record it in the world.
+pub fn load_chunk(
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    art: &crate::art::Art,
+    world: &mut World,
+    cx: i32,
+    cy: i32,
+) {
+    if world.chunks.contains_key(&(cx, cy)) {
+        return;
+    }
+    let (cells, props) = gen_chunk(cx, cy, world.seed, world.scene, world.spawn);
+    let mut ents: Vec<Entity> = Vec::new();
+    // Floor (one textured sprite covering the whole chunk).
+    let img = chunk_floor_image(images, world.scene);
+    let span = CHUNK as f32 * TILE;
+    let center = Vec2::new(cx as f32 * span + span * 0.5, -(cy as f32 * span + span * 0.5));
+    ents.push(
+        commands
+            .spawn((
+                Sprite {
+                    image: img,
+                    custom_size: Some(Vec2::splat(span)),
+                    ..default()
+                },
+                Transform::from_xyz(center.x, center.y, Z_FLOOR),
+                WorldTile,
+            ))
+            .id(),
+    );
+    // Walls.
+    let cu = CHUNK as usize;
+    for ly in 0..CHUNK {
+        for lx in 0..CHUNK {
+            if cells[ly as usize * cu + lx as usize] == Cell::Wall {
+                let gc = cx * CHUNK + lx;
+                let gr = cy * CHUNK + ly;
+                let c = Vec2::new(gc as f32 * TILE + TILE * 0.5, -(gr as f32 * TILE + TILE * 0.5));
+                ents.extend(spawn_wall_tile(commands, &art.soft, c));
+            }
+        }
+    }
+    // Props.
+    for prop in &props {
+        ents.extend(spawn_prop_entity(commands, art, *prop));
+    }
+    world.chunks.insert((cx, cy), Chunk { cells, props, ents });
+}
+
+fn unload_chunk(commands: &mut Commands, world: &mut World, key: (i32, i32)) {
+    if let Some(ch) = world.chunks.remove(&key) {
+        for e in ch.ents {
+            commands.entity(e).try_despawn();
+        }
+    }
+}
+
+/// Stream chunks in around the player and drop far ones each frame.
+pub fn stream_chunks(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    art: Res<crate::art::Art>,
+    mut world: ResMut<World>,
+    player_q: Query<&Transform, With<Player>>,
+) {
+    let Ok(ptf) = player_q.single() else {
+        return;
+    };
+    let (pc, pr) = world.world_to_tile(ptf.translation.truncate());
+    let (pcx, pcy) = (pc.div_euclid(CHUNK), pr.div_euclid(CHUNK));
+    // Unload anything outside the window.
+    let far: Vec<(i32, i32)> = world
+        .chunks
+        .keys()
+        .copied()
+        .filter(|(cx, cy)| (cx - pcx).abs() > CHUNK_R || (cy - pcy).abs() > CHUNK_R)
+        .collect();
+    for key in far {
+        unload_chunk(&mut commands, &mut world, key);
+    }
+    // Load a couple of missing chunks per frame (amortised).
+    let mut budget = 2;
+    for cy in (pcy - CHUNK_R)..=(pcy + CHUNK_R) {
+        for cx in (pcx - CHUNK_R)..=(pcx + CHUNK_R) {
+            if budget <= 0 {
+                return;
+            }
+            if !world.chunks.contains_key(&(cx, cy)) {
+                load_chunk(&mut commands, &mut images, &art, &mut world, cx, cy);
+                budget -= 1;
+            }
+        }
+    }
 }
 
 #[derive(Component)]
@@ -451,9 +624,12 @@ fn pr_soft(commands: &mut Commands, art: &crate::art::Art, c: Color, w: f32, h: 
 
 /// Draw all of the world's props (trees, bushes, vehicles, furniture). Each prop
 /// is a rotated root with layered child sprites, plus a soft cast shadow.
-pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art) {
+/// Spawn the visuals for a single prop (shadow + rotated root with children +
+/// `PropObj`) and return the top-level entities so a chunk can despawn them.
+pub fn spawn_prop_entity(commands: &mut Commands, art: &crate::art::Art, prop: Prop) -> Vec<Entity> {
     let mut rng = rand::thread_rng();
-    for prop in &world.props {
+    let mut ents: Vec<Entity> = Vec::new();
+    {
         let pos = prop.pos;
         let z = depth_z(Z_PROP, pos.y);
         // Soft cast shadow on the ground.
@@ -463,16 +639,20 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
             PropKind::Tree => (44.0, 40.0),
             _ => (prop.r * 2.6, prop.r * 2.0),
         };
-        commands.spawn((
-            Sprite {
-                image: art.soft.clone(),
-                color: Color::srgba(0.0, 0.0, 0.0, 0.4),
-                custom_size: Some(Vec2::new(sw, sh)),
-                ..default()
-            },
-            Transform::from_xyz(pos.x + 5.0, pos.y - prop.r * 0.5, Z_DECAL + 4.0),
-            WorldTile,
-        ));
+        ents.push(
+            commands
+                .spawn((
+                    Sprite {
+                        image: art.soft.clone(),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.4),
+                        custom_size: Some(Vec2::new(sw, sh)),
+                        ..default()
+                    },
+                    Transform::from_xyz(pos.x + 5.0, pos.y - prop.r * 0.5, Z_DECAL + 4.0),
+                    WorldTile,
+                ))
+                .id(),
+        );
         let (hp, flammable, explodes) = prop_stats(prop.kind);
         let root = commands
             .spawn((
@@ -628,7 +808,9 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
             }
         }
         commands.entity(root).add_children(&parts);
+        ents.push(root);
     }
+    ents
 }
 
 /// Drive damaged props: burning ones throw flame + smoke and burn down; when a
@@ -716,108 +898,6 @@ pub fn prop_system(
                     knockback: 250.0,
                     sever: 0.4,
                 });
-            }
-        }
-    }
-}
-
-/// Spawn floor + wall sprites once when the game starts. `soft` is the shared
-/// radial-gradient texture used for soft cast shadows.
-pub fn spawn_world_sprites(commands: &mut Commands, world: &World, soft: &Handle<Image>) {
-    let mut rng = rand::thread_rng();
-    let grass = world.scene == Scene::Park;
-    for r in 0..world.rows {
-        for c in 0..world.cols {
-            let center = world.tile_center(c, r);
-            match world.cells[r * world.cols + c] {
-                Cell::Floor => {
-                    // Asphalt with per-tile jitter (grass green in the park), a bit
-                    // brighter than pitch black so the ground reads as lit.
-                    let j = rng.gen_range(-0.02..0.02);
-                    let warm = rng.gen_range(-0.008..0.012);
-                    let base = 0.27 + j;
-                    let col = if grass {
-                        Color::srgb(0.13 + j + warm, 0.24 + j, 0.13 + j)
-                    } else {
-                        Color::srgb(base + warm, base, base + 0.015)
-                    };
-                    commands.spawn((
-                        Sprite::from_color(col, Vec2::splat(TILE)),
-                        Transform::from_xyz(center.x, center.y, Z_FLOOR),
-                        WorldTile,
-                    ));
-                    // Faint tile seams (a subtle grid) for texture and scale.
-                    let seam = Color::srgb(base - 0.05, base - 0.05, base - 0.045);
-                    commands.spawn((
-                        Sprite::from_color(seam, Vec2::new(TILE, 1.5)),
-                        Transform::from_xyz(center.x, center.y - TILE * 0.5, Z_FLOOR + 0.05),
-                        WorldTile,
-                    ));
-                    commands.spawn((
-                        Sprite::from_color(seam, Vec2::new(1.5, TILE)),
-                        Transform::from_xyz(center.x - TILE * 0.5, center.y, Z_FLOOR + 0.05),
-                        WorldTile,
-                    ));
-                    // Occasional cracks / gravel speckle for density.
-                    if rng.gen_bool(0.16) {
-                        let sp = rng.gen_range(2.0..5.0);
-                        let d = rng.gen_range(-0.06..0.06);
-                        commands.spawn((
-                            Sprite::from_color(
-                                Color::srgb(base + d, base + d, base + d + 0.01),
-                                Vec2::splat(sp),
-                            ),
-                            Transform::from_xyz(
-                                center.x + rng.gen_range(-15.0..15.0),
-                                center.y + rng.gen_range(-15.0..15.0),
-                                Z_FLOOR + 0.1,
-                            ),
-                            WorldTile,
-                        ));
-                    }
-                }
-                Cell::Wall => {
-                    let shade = rng.gen_range(-0.02..0.02);
-                    let wz = depth_z(Z_PROP, center.y);
-                    // Soft gradient cast shadow on the ground below the wall.
-                    commands.spawn((
-                        Sprite {
-                            image: soft.clone(),
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.42),
-                            custom_size: Some(Vec2::new(TILE * 1.25, TILE * 0.85)),
-                            ..default()
-                        },
-                        Transform::from_xyz(center.x + 5.0, center.y - TILE * 0.42, Z_DECAL + 5.0),
-                        WorldTile,
-                    ));
-                    // Wall body (a brick/concrete block).
-                    commands.spawn((
-                        Sprite::from_color(
-                            Color::srgb(0.17 + shade, 0.18 + shade, 0.22 + shade),
-                            Vec2::splat(TILE),
-                        ),
-                        Transform::from_xyz(center.x, center.y, wz),
-                        WorldTile,
-                    ));
-                    // Top highlight lip (light catching the top edge).
-                    commands.spawn((
-                        Sprite::from_color(
-                            Color::srgb(0.30, 0.31, 0.37),
-                            Vec2::new(TILE, 7.0),
-                        ),
-                        Transform::from_xyz(center.x, center.y + TILE * 0.5 - 3.5, wz + 0.05),
-                        WorldTile,
-                    ));
-                    // Darker bottom edge for contact shading.
-                    commands.spawn((
-                        Sprite::from_color(
-                            Color::srgb(0.10, 0.10, 0.13),
-                            Vec2::new(TILE, 4.0),
-                        ),
-                        Transform::from_xyz(center.x, center.y - TILE * 0.5 + 2.0, wz + 0.05),
-                        WorldTile,
-                    ));
-                }
             }
         }
     }

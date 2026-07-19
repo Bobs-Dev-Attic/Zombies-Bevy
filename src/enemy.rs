@@ -457,27 +457,40 @@ fn pick_kind(wave: u32, rng: &mut impl Rng) -> ZKind {
     }
 }
 
-/// A breadth-first distance field from the player over the walkable tiles, so
-/// zombies can follow a path around walls instead of grinding into them. Rebuilt
-/// each frame (the grid is tiny).
+/// Side of the flow-field window (tiles). The endless world is infinite, so the
+/// BFS only covers a bounded region around the player — zombies only exist there.
+pub const FF_WIN: i32 = 56;
+
+/// A breadth-first distance field from the player over the walkable tiles in a
+/// window around the player, so zombies path around walls instead of grinding
+/// into them. Rebuilt each frame.
 #[derive(Resource, Default)]
 pub struct FlowField {
-    pub cols: usize,
-    pub rows: usize,
+    pub ox: i32, // global tile of the window's left edge
+    pub oy: i32, // global tile of the window's top edge
+    pub w: i32,
+    pub h: i32,
     pub dist: Vec<u32>, // steps to the player; u32::MAX = unreachable
 }
 
 impl FlowField {
-    /// Path-distance (in tiles) from `p` to the player, or None if walled off.
+    #[inline]
+    fn idx(&self, lx: i32, ly: i32) -> usize {
+        (ly * self.w + lx) as usize
+    }
+
+    /// Path-distance (in tiles) from `p` to the player, or None if outside the
+    /// window / walled off.
     pub fn tile_dist(&self, world: &World, p: Vec2) -> Option<u32> {
         if self.dist.is_empty() {
             return None;
         }
-        let (c, r) = world.world_to_tile(p);
-        if c < 0 || r < 0 || c as usize >= self.cols || r as usize >= self.rows {
+        let (gc, gr) = world.world_to_tile(p);
+        let (lx, ly) = (gc - self.ox, gr - self.oy);
+        if lx < 0 || ly < 0 || lx >= self.w || ly >= self.h {
             return None;
         }
-        let d = self.dist[r as usize * self.cols + c as usize];
+        let d = self.dist[self.idx(lx, ly)];
         (d != u32::MAX).then_some(d)
     }
 
@@ -486,40 +499,37 @@ impl FlowField {
         if self.dist.is_empty() {
             return None;
         }
-        let (c, r) = world.world_to_tile(p);
-        if c < 0 || r < 0 || c as usize >= self.cols || r as usize >= self.rows {
+        let (gc, gr) = world.world_to_tile(p);
+        let (lx, ly) = (gc - self.ox, gr - self.oy);
+        if lx < 0 || ly < 0 || lx >= self.w || ly >= self.h {
             return None;
         }
-        let here = self.dist[r as usize * self.cols + c as usize];
+        let here = self.dist[self.idx(lx, ly)];
         if here == u32::MAX {
             return None;
         }
         let mut best = here;
-        let mut best_tile: Option<(isize, isize)> = None;
+        let mut best_tile: Option<(i32, i32)> = None;
         for dr in -1..=1 {
             for dc in -1..=1 {
                 if dr == 0 && dc == 0 {
                     continue;
                 }
-                let nc = c + dc;
-                let nr = r + dr;
-                if nc < 0 || nr < 0 || nc as usize >= self.cols || nr as usize >= self.rows {
+                let (nx, ny) = (lx + dc, ly + dr);
+                if nx < 0 || ny < 0 || nx >= self.w || ny >= self.h {
                     continue;
                 }
-                // Don't cut a diagonal through a wall corner.
-                if dc != 0 && dr != 0 && (world.solid(c + dc, r) || world.solid(c, r + dr)) {
+                if dc != 0 && dr != 0 && (world.solid(gc + dc, gr) || world.solid(gc, gr + dr)) {
                     continue;
                 }
-                let nd = self.dist[nr as usize * self.cols + nc as usize];
+                let nd = self.dist[self.idx(nx, ny)];
                 if nd < best {
                     best = nd;
-                    best_tile = Some((nc, nr));
+                    best_tile = Some((gc + dc, gr + dr));
                 }
             }
         }
-        best_tile.map(|(nc, nr)| {
-            (world.tile_center(nc as usize, nr as usize) - p).normalize_or_zero()
-        })
+        best_tile.map(|(tc, tr)| (world.tile_center(tc, tr) - p).normalize_or_zero())
     }
 }
 
@@ -530,50 +540,56 @@ pub struct Noise {
     pub level: f32,
 }
 
-/// Rebuild the flow field each frame: BFS out from the player's tile.
+/// Rebuild the flow field each frame: BFS out from the player's tile over a
+/// bounded window (the endless world can't be searched whole).
 pub fn compute_flow_field(
     world: Res<World>,
     player_q: Query<&Transform, With<Player>>,
     mut ff: ResMut<FlowField>,
 ) {
-    let n = world.cols * world.rows;
-    if ff.dist.len() != n {
-        ff.cols = world.cols;
-        ff.rows = world.rows;
-        ff.dist = vec![u32::MAX; n];
-    }
-    for d in ff.dist.iter_mut() {
-        *d = u32::MAX;
-    }
     let Ok(ptf) = player_q.single() else {
+        ff.dist.clear();
         return;
     };
     let (pc, pr) = world.world_to_tile(ptf.translation.truncate());
-    if pc < 0 || pr < 0 || pc as usize >= world.cols || pr as usize >= world.rows || world.solid(pc, pr) {
+    let (ox, oy) = (pc - FF_WIN / 2, pr - FF_WIN / 2);
+    let (w, h) = (FF_WIN, FF_WIN);
+    ff.ox = ox;
+    ff.oy = oy;
+    ff.w = w;
+    ff.h = h;
+    let n = (w * h) as usize;
+    if ff.dist.len() != n {
+        ff.dist = vec![u32::MAX; n];
+    } else {
+        for d in ff.dist.iter_mut() {
+            *d = u32::MAX;
+        }
+    }
+    let idx = |lx: i32, ly: i32| (ly * w + lx) as usize;
+    let (plx, ply) = (pc - ox, pr - oy);
+    if plx < 0 || ply < 0 || plx >= w || ply >= h || world.solid(pc, pr) {
         return;
     }
-    let cols = world.cols;
-    let idx = |c: isize, r: isize| r as usize * cols + c as usize;
-    let mut queue: std::collections::VecDeque<(isize, isize)> = std::collections::VecDeque::new();
-    ff.dist[idx(pc, pr)] = 0;
-    queue.push_back((pc, pr));
-    while let Some((c, r)) = queue.pop_front() {
-        let cd = ff.dist[idx(c, r)];
+    let mut queue: std::collections::VecDeque<(i32, i32)> = std::collections::VecDeque::new();
+    ff.dist[idx(plx, ply)] = 0;
+    queue.push_back((plx, ply));
+    while let Some((lx, ly)) = queue.pop_front() {
+        let cd = ff.dist[idx(lx, ly)];
         for (dc, dr) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-            let nc = c + dc;
-            let nr = r + dr;
-            if nc < 0 || nr < 0 || nc as usize >= cols || nr as usize >= world.rows {
+            let (nx, ny) = (lx + dc, ly + dr);
+            if nx < 0 || ny < 0 || nx >= w || ny >= h {
                 continue;
             }
-            if world.solid(nc, nr) {
+            if world.solid(ox + nx, oy + ny) {
                 continue;
             }
-            let ni = idx(nc, nr);
+            let ni = idx(nx, ny);
             if ff.dist[ni] != u32::MAX {
                 continue;
             }
             ff.dist[ni] = cd + 1;
-            queue.push_back((nc, nr));
+            queue.push_back((nx, ny));
         }
     }
 }

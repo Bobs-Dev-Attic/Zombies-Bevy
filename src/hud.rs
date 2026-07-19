@@ -3,7 +3,7 @@ use crate::enemy::WaveState;
 use crate::input::TouchSticks;
 use crate::player::Player;
 use crate::weapons::{Ammo, WeaponKind};
-use crate::world::{generate_world, spawn_world_sprites, World};
+use crate::world::World;
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 
@@ -534,10 +534,17 @@ pub fn start_game(
     *waves = WaveState::default();
     *spawner = crate::gear::PickupSpawner::default();
 
-    let world = generate_world(choice.0);
-    spawn_world_sprites(&mut commands, &world, &art.soft);
-    crate::world::spawn_props(&mut commands, &world, &art);
+    let mut world = crate::world::new_world(choice.0);
     let spawn = world.spawn;
+    // Stream in the initial window of chunks around the spawn synchronously so
+    // the player doesn't drop into an empty void; the rest streams as they move.
+    let (pc, pr) = world.world_to_tile(spawn);
+    let (pcx, pcy) = (pc.div_euclid(crate::world::CHUNK), pr.div_euclid(crate::world::CHUNK));
+    for cy in (pcy - crate::world::CHUNK_R)..=(pcy + crate::world::CHUNK_R) {
+        for cx in (pcx - crate::world::CHUNK_R)..=(pcx + crate::world::CHUNK_R) {
+            crate::world::load_chunk(&mut commands, &mut images, &art, &mut world, cx, cy);
+        }
+    }
     // Scatter starter gear before we hand the world to the ECS as a resource.
     crate::gear::scatter_pickups(&mut commands, &art, &world, spawn);
     // Dress the arena: debris, blood pools, corpses, flies, crows.
