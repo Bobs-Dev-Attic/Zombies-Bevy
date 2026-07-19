@@ -801,6 +801,7 @@ pub fn update_hud(
     player_q: Query<&Player>,
     score: Res<Score>,
     waves: Res<WaveState>,
+    world: Option<Res<crate::world::World>>,
     mut bars_q: Query<(&Bar, &mut Node, &mut BackgroundColor), Without<GearRow>>,
     mut rows_q: Query<(&GearRow, &mut Node), Without<Bar>>,
     mut ammo_q: Query<&mut Text, (With<AmmoText>, Without<WaveText>)>,
@@ -863,7 +864,11 @@ pub fn update_hud(
         } else {
             "Wave cleared!".to_string()
         };
-        **t = format!("{}\nScore {}   Kills {}", phase, score.points, score.kills);
+        let scene = world.as_ref().map(|w| w.scene.label()).unwrap_or("");
+        **t = format!(
+            "{}   {}\nScore {}   Kills {}",
+            phase, scene, score.points, score.kills
+        );
     }
     let _ = &Ammo::Rounds;
 }

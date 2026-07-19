@@ -51,6 +51,25 @@ pub struct Prop {
     pub angle: f32,
 }
 
+/// Which environment this run generates. Each picks a different wall layout,
+/// ground colour and prop mix.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Scene {
+    Streets,
+    Park,
+    Neighborhood,
+}
+
+impl Scene {
+    pub fn label(self) -> &'static str {
+        match self {
+            Scene::Streets => "Downtown Streets",
+            Scene::Park => "City Park",
+            Scene::Neighborhood => "The Neighborhood",
+        }
+    }
+}
+
 #[derive(Resource)]
 pub struct World {
     pub cols: usize,
@@ -58,6 +77,7 @@ pub struct World {
     pub cells: Vec<Cell>,
     pub spawn: Vec2,
     pub props: Vec<Prop>,
+    pub scene: Scene,
 }
 
 impl World {
@@ -145,7 +165,8 @@ impl World {
     }
 }
 
-/// Build a "streets" arena: solid border plus scattered building blocks for cover.
+/// Build the arena for a randomly chosen scene: a downtown street grid, an open
+/// city park, or a house-lined neighborhood — each with its own walls and props.
 pub fn generate_world() -> World {
     let cols = 46usize;
     let rows = 34usize;
@@ -164,32 +185,85 @@ pub fn generate_world() -> World {
         set(&mut cells, 0, r, Cell::Wall);
         set(&mut cells, cols - 1, r, Cell::Wall);
     }
-    // Scatter rectangular buildings/crates, keeping a clear zone at the center spawn.
     let mut rng = rand::thread_rng();
     let center = (cols / 2, rows / 2);
-    let blocks: [(usize, usize, usize, usize); 10] = [
-        (5, 4, 6, 4),
-        (34, 5, 6, 5),
-        (6, 24, 7, 5),
-        (33, 25, 7, 4),
-        (20, 3, 5, 3),
-        (19, 27, 6, 3),
-        (3, 14, 3, 6),
-        (40, 15, 3, 6),
-        (14, 12, 4, 3),
-        (28, 18, 4, 3),
-    ];
-    for (bx, by, bw, bh) in blocks {
-        for r in by..(by + bh) {
-            for c in bx..(bx + bw) {
-                // leave a doorway gap
-                if rng.gen_bool(0.12) {
-                    continue;
+    let scene = *[Scene::Streets, Scene::Park, Scene::Neighborhood]
+        .get(rng.gen_range(0..3))
+        .unwrap();
+
+    match scene {
+        Scene::Streets => {
+            // Scattered rectangular buildings/crates with occasional doorway gaps.
+            let blocks: [(usize, usize, usize, usize); 10] = [
+                (5, 4, 6, 4),
+                (34, 5, 6, 5),
+                (6, 24, 7, 5),
+                (33, 25, 7, 4),
+                (20, 3, 5, 3),
+                (19, 27, 6, 3),
+                (3, 14, 3, 6),
+                (40, 15, 3, 6),
+                (14, 12, 4, 3),
+                (28, 18, 4, 3),
+            ];
+            for (bx, by, bw, bh) in blocks {
+                for r in by..(by + bh) {
+                    for c in bx..(bx + bw) {
+                        if rng.gen_bool(0.12) {
+                            continue;
+                        }
+                        set(&mut cells, c, r, Cell::Wall);
+                    }
                 }
-                set(&mut cells, c, r, Cell::Wall);
+            }
+        }
+        Scene::Park => {
+            // Mostly open green space with a couple of small sheds/restrooms for
+            // cover — the trees and bushes (props) do the rest.
+            let sheds: [(usize, usize, usize, usize); 3] = [
+                (7, 6, 4, 3),
+                (34, 7, 4, 3),
+                (20, 26, 5, 3),
+            ];
+            for (bx, by, bw, bh) in sheds {
+                for r in by..(by + bh) {
+                    for c in bx..(bx + bw) {
+                        if rng.gen_bool(0.15) {
+                            continue;
+                        }
+                        set(&mut cells, c, r, Cell::Wall);
+                    }
+                }
+            }
+        }
+        Scene::Neighborhood => {
+            // A loose grid of houses: hollow wall rings with a door gap, streets
+            // running between them.
+            let houses: [(usize, usize, usize, usize); 6] = [
+                (4, 4, 8, 6),
+                (18, 4, 8, 6),
+                (34, 5, 8, 6),
+                (5, 22, 8, 6),
+                (20, 24, 8, 6),
+                (34, 22, 8, 6),
+            ];
+            for (bx, by, bw, bh) in houses {
+                // Walls around the perimeter of the house.
+                for c in bx..(bx + bw) {
+                    set(&mut cells, c, by, Cell::Wall);
+                    set(&mut cells, c, by + bh - 1, Cell::Wall);
+                }
+                for r in by..(by + bh) {
+                    set(&mut cells, bx, r, Cell::Wall);
+                    set(&mut cells, bx + bw - 1, r, Cell::Wall);
+                }
+                // Punch a door gap on the front (bottom) wall.
+                let door = bx + 2 + rng.gen_range(0..bw.saturating_sub(4).max(1));
+                set(&mut cells, door, by + bh - 1, Cell::Floor);
             }
         }
     }
+
     // Guarantee the spawn area is clear.
     for r in (center.1 - 2)..=(center.1 + 2) {
         for c in (center.0 - 2)..=(center.0 + 2) {
@@ -200,27 +274,59 @@ pub fn generate_world() -> World {
         center.0 as f32 * TILE + TILE * 0.5,
         -(center.1 as f32 * TILE + TILE * 0.5),
     );
-    let mut world = World { cols, rows, cells, spawn, props: Vec::new() };
+    let mut world = World { cols, rows, cells, spawn, props: Vec::new(), scene };
 
-    // Scatter scenery — trees, bushes, parked vehicles and street furniture — on
-    // open floor, clear of the spawn and not piled on top of each other.
-    let kinds = [
-        PropKind::Tree,
-        PropKind::Bush,
-        PropKind::Bush,
-        PropKind::Car,
-        PropKind::Van,
-        PropKind::Bench,
-        PropKind::Dumpster,
-        PropKind::Barrel,
-        PropKind::Crate,
-        PropKind::Hydrant,
-        PropKind::Table,
-        PropKind::Sofa,
-    ];
-    let want = 36;
+    // Scatter scenery, weighted to fit the scene — a park is mostly trees and
+    // bushes, a neighborhood has cars and furniture, downtown a mix.
+    let kinds: &[PropKind] = match scene {
+        Scene::Park => &[
+            PropKind::Tree,
+            PropKind::Tree,
+            PropKind::Tree,
+            PropKind::Bush,
+            PropKind::Bush,
+            PropKind::Bush,
+            PropKind::Bench,
+            PropKind::Bench,
+            PropKind::Barrel,
+            PropKind::Hydrant,
+        ],
+        Scene::Neighborhood => &[
+            PropKind::Car,
+            PropKind::Car,
+            PropKind::Van,
+            PropKind::Bush,
+            PropKind::Bush,
+            PropKind::Tree,
+            PropKind::Bench,
+            PropKind::Sofa,
+            PropKind::Table,
+            PropKind::Crate,
+            PropKind::Dumpster,
+            PropKind::Hydrant,
+        ],
+        Scene::Streets => &[
+            PropKind::Tree,
+            PropKind::Bush,
+            PropKind::Bush,
+            PropKind::Car,
+            PropKind::Van,
+            PropKind::Bench,
+            PropKind::Dumpster,
+            PropKind::Barrel,
+            PropKind::Crate,
+            PropKind::Hydrant,
+            PropKind::Table,
+            PropKind::Sofa,
+        ],
+    };
+    let want = match scene {
+        Scene::Park => 46,
+        Scene::Neighborhood => 40,
+        Scene::Streets => 36,
+    };
     let mut attempts = 0;
-    while world.props.len() < want && attempts < 1200 {
+    while world.props.len() < want && attempts < 1400 {
         attempts += 1;
         let c = rng.gen_range(2..cols - 2);
         let r = rng.gen_range(2..rows - 2);
@@ -230,17 +336,22 @@ pub fn generate_world() -> World {
         }
         let kind = kinds[rng.gen_range(0..kinds.len())];
         let (pr, solid) = prop_spec(kind);
-        // The tile and its immediate neighbours must be clear floor so a big prop
-        // isn't jammed into a wall.
-        let mut ok = true;
-        'chk: for dr in -1..=1 {
-            for dc in -1..=1 {
-                if world.solid(c as isize + dc, r as isize + dr) {
-                    ok = false;
-                    break 'chk;
+        // Big props need a clear 3x3; small furniture only needs its own tile
+        // clear (so a sofa or table can sit inside a house room).
+        let ok = if pr > 16.0 {
+            let mut clear = true;
+            'chk: for dr in -1..=1 {
+                for dc in -1..=1 {
+                    if world.solid(c as isize + dc, r as isize + dr) {
+                        clear = false;
+                        break 'chk;
+                    }
                 }
             }
-        }
+            clear
+        } else {
+            !world.solid(c as isize, r as isize)
+        };
         if !ok {
             continue;
         }
@@ -472,17 +583,22 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
 /// radial-gradient texture used for soft cast shadows.
 pub fn spawn_world_sprites(commands: &mut Commands, world: &World, soft: &Handle<Image>) {
     let mut rng = rand::thread_rng();
+    let grass = world.scene == Scene::Park;
     for r in 0..world.rows {
         for c in 0..world.cols {
             let center = world.tile_center(c, r);
             match world.cells[r * world.cols + c] {
                 Cell::Floor => {
-                    // Asphalt with per-tile jitter, brighter than pitch black so
-                    // the scene reads as a lit street.
+                    // Asphalt with per-tile jitter (grass green in the park), a bit
+                    // brighter than pitch black so the ground reads as lit.
                     let j = rng.gen_range(-0.02..0.02);
                     let warm = rng.gen_range(-0.008..0.012);
                     let base = 0.27 + j;
-                    let col = Color::srgb(base + warm, base, base + 0.015);
+                    let col = if grass {
+                        Color::srgb(0.13 + j + warm, 0.24 + j, 0.13 + j)
+                    } else {
+                        Color::srgb(base + warm, base, base + 0.015)
+                    };
                     commands.spawn((
                         Sprite::from_color(col, Vec2::splat(TILE)),
                         Transform::from_xyz(center.x, center.y, Z_FLOOR),
