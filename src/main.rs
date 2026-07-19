@@ -43,6 +43,7 @@ fn main() {
         .init_resource::<enemy::WaveState>()
         .init_resource::<enemy::FlowField>()
         .init_resource::<enemy::Noise>()
+        .init_resource::<world::SceneChoice>()
         .init_resource::<combat::FireLatch>()
         .init_resource::<gear::PickupSpawner>()
         .init_resource::<hud::HurtFx>()
@@ -105,7 +106,7 @@ fn main() {
                 ),
                 combat::explosion_system,
                 combat::particle_system,
-                combat::decal_system,
+                (combat::decal_system, combat::player_footprints),
                 combat::zombie_death_system,
                 combat::muzzle_flash_system,
                 (combat::reload_fx, combat::casing_system),

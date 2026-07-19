@@ -67,7 +67,12 @@ pub enum MenuButton {
     Play,
     Options,
     Back,
+    CycleScene,
 }
+
+/// The text inside the scenario-select button, rewritten as it cycles.
+#[derive(Component)]
+pub struct SceneChoiceText;
 #[derive(Component)]
 pub struct OptionsUi;
 #[derive(Component)]
@@ -112,7 +117,15 @@ fn menu_button(parent: &mut ChildSpawnerCommands, label: &str, action: MenuButto
         });
 }
 
-pub fn setup_menu(mut commands: Commands) {
+fn scene_label(c: Option<crate::world::Scene>) -> String {
+    match c {
+        None => "SCENARIO:  Random".to_string(),
+        Some(s) => format!("SCENARIO:  {}", s.label()),
+    }
+}
+
+pub fn setup_menu(mut commands: Commands, choice: Res<crate::world::SceneChoice>) {
+    let scene_text = scene_label(choice.0);
     commands
         .spawn((
             Node {
@@ -141,6 +154,28 @@ pub fn setup_menu(mut commands: Commands) {
             p.spawn((Node { margin: UiRect::top(Val::Px(8.0)), ..default() },));
             menu_button(p, "PLAY", MenuButton::Play);
             menu_button(p, "OPTIONS", MenuButton::Options);
+            // Scenario selector — cycles Random / Streets / Park / Neighborhood.
+            p.spawn((
+                Button,
+                Node {
+                    width: Val::Px(300.0),
+                    height: Val::Px(44.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                BackgroundColor(BTN_BG),
+                BorderRadius::all(Val::Px(8.0)),
+                MenuButton::CycleScene,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new(scene_text.clone()),
+                    TextFont { font_size: 19.0, ..default() },
+                    TextColor(Color::srgb(0.75, 0.78, 0.85)),
+                    SceneChoiceText,
+                ));
+            });
             p.spawn((
                 Text::new(
                     "WASD move  •  Mouse aim  •  Click fire  •  Shift sprint\nR reload (auto when empty)  •  1-7 or E swap weapon  •  Mobile: on-screen stick + FIRE button",
@@ -388,6 +423,8 @@ pub fn menu_buttons(
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<State<GameState>>,
     mut next: ResMut<NextState<GameState>>,
+    mut choice: ResMut<crate::world::SceneChoice>,
+    mut scene_txt: Query<&mut Text, With<SceneChoiceText>>,
     mut q: Query<(&Interaction, &MenuButton, &mut BackgroundColor), Changed<Interaction>>,
 ) {
     for (interaction, action, mut bg) in q.iter_mut() {
@@ -396,6 +433,19 @@ pub fn menu_buttons(
                 MenuButton::Play => next.set(GameState::Playing),
                 MenuButton::Options => next.set(GameState::Options),
                 MenuButton::Back => next.set(GameState::Menu),
+                MenuButton::CycleScene => {
+                    use crate::world::Scene;
+                    // Random → Streets → Park → Neighborhood → Random …
+                    choice.0 = match choice.0 {
+                        None => Some(Scene::Streets),
+                        Some(Scene::Streets) => Some(Scene::Park),
+                        Some(Scene::Park) => Some(Scene::Neighborhood),
+                        Some(Scene::Neighborhood) => None,
+                    };
+                    if let Ok(mut t) = scene_txt.single_mut() {
+                        **t = scene_label(choice.0);
+                    }
+                }
             }
         }
         bg.0 = match *interaction {
@@ -478,12 +528,13 @@ pub fn start_game(
     mut score: ResMut<Score>,
     mut waves: ResMut<WaveState>,
     mut spawner: ResMut<crate::gear::PickupSpawner>,
+    choice: Res<crate::world::SceneChoice>,
 ) {
     *score = Score::default();
     *waves = WaveState::default();
     *spawner = crate::gear::PickupSpawner::default();
 
-    let world = generate_world();
+    let world = generate_world(choice.0);
     spawn_world_sprites(&mut commands, &world, &art.soft);
     crate::world::spawn_props(&mut commands, &world, &art);
     let spawn = world.spawn;

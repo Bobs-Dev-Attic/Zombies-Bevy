@@ -40,6 +40,59 @@ pub struct Decal {
     pub life: f32,
 }
 
+/// Marks a blood pool the player can track through, leaving bloody footprints.
+#[derive(Component)]
+pub struct BloodDecal;
+
+/// If the player is standing in blood, track fading bloody footprints behind them
+/// for a short while.
+pub fn player_footprints(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut player_q: Query<(&mut Player, &Transform)>,
+    blood_q: Query<&Transform, (With<BloodDecal>, Without<Player>)>,
+) {
+    let dt = time.delta_secs();
+    let Ok((mut p, tf)) = player_q.single_mut() else {
+        return;
+    };
+    let pos = tf.translation.truncate();
+    // Standing on (or right next to) blood re-wets the soles.
+    for btf in blood_q.iter() {
+        if (btf.translation.truncate() - pos).length() < 20.0 {
+            p.blood_feet = 3.5;
+            break;
+        }
+    }
+    p.blood_feet = (p.blood_feet - dt).max(0.0);
+    if p.blood_feet <= 0.0 || !p.moving {
+        return;
+    }
+    // Stamp a print every stride, alternating feet, fainter as the blood wears off.
+    p.step_acc += p.vel.length() * dt;
+    if p.step_acc >= 15.0 {
+        p.step_acc = 0.0;
+        p.foot_side = -p.foot_side;
+        let ang = p.angle;
+        let side = Vec2::new(-ang.sin(), ang.cos());
+        let at = pos + side * 5.0 * p.foot_side as f32;
+        let a = (p.blood_feet / 3.5).clamp(0.0, 1.0) * 0.6;
+        commands.spawn((
+            Sprite {
+                color: Color::srgba(0.3, 0.02, 0.03, a),
+                custom_size: Some(Vec2::new(6.5, 3.6)),
+                ..default()
+            },
+            Transform {
+                translation: Vec3::new(at.x, at.y, Z_DECAL + 0.7),
+                rotation: Quat::from_rotation_z(ang),
+                ..default()
+            },
+            Decal { life: 6.0 },
+        ));
+    }
+}
+
 /// An ejected shell/casing that tumbles across the floor, bounces off walls, and
 /// settles before fading out.
 #[derive(Component)]
@@ -329,6 +382,7 @@ fn blood_burst(commands: &mut Commands, pos: Vec2, dir: f32, amount: u32) {
             Transform::from_xyz(pos.x + o.x, pos.y + o.y, Z_DECAL + rng.gen_range(0.0..1.0))
                 .with_rotation(Quat::from_rotation_z(rng.gen_range(0.0..std::f32::consts::TAU))),
             Decal { life: rng.gen_range(16.0..30.0) },
+            BloodDecal,
         ));
     }
     // 2) A directional cast-off spray: small droplets thrown along `dir`, getting
@@ -1249,6 +1303,8 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
         }
         return;
     }
+    // A body lying flat sprawls larger than its standing top-down footprint.
+    let s = s * 1.4;
     let place = |commands: &mut Commands, c: Color, w: f32, h: f32, ox: f32, oy: f32, extra: f32, z: f32| {
         let wx = pos.x + ox * ca - oy * sa;
         let wy = pos.y + ox * sa + oy * ca;
@@ -1293,6 +1349,7 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
         },
         Transform::from_xyz(pos.x, pos.y, Z_DECAL + 1.6),
         Decal { life },
+        BloodDecal,
     ));
     for _ in 0..rng.gen_range(2..5) {
         let o = Vec2::new(rng.gen_range(-16.0..16.0), rng.gen_range(-16.0..16.0)) * s;
@@ -1308,25 +1365,53 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
         ));
     }
     let shirt = look.shirt.to_srgba();
-    let dark = Color::srgb(shirt.red * 0.5, shirt.green * 0.5, shirt.blue * 0.5);
+    let cloth = Color::srgb(shirt.red * 0.5, shirt.green * 0.5, shirt.blue * 0.5);
+    let cloth_hi = Color::srgb(shirt.red * 0.62, shirt.green * 0.62, shirt.blue * 0.62);
     let skin = look.skin;
+    let sk = skin.to_srgba();
+    let skin_dark = Color::srgb(sk.red * 0.82, sk.green * 0.82, sk.blue * 0.82);
+    let hand_c = Color::srgb(sk.red * 0.88, sk.green * 0.88, sk.blue * 0.88);
     let pants = look.pants;
+    let pd = pants.to_srgba();
+    let pants_dark = Color::srgb(pd.red * 0.78, pd.green * 0.78, pd.blue * 0.78);
     let bone = Color::srgb(0.86, 0.83, 0.74);
     let zc = Z_DECAL + 2.0;
-    // Splayed limbs (each at its own broken angle).
-    place(commands, skin, 12.0 * s, 4.5 * s, 2.0 * s, 8.0 * s, rng.gen_range(0.4..1.1), zc);
-    place(commands, skin, 12.0 * s, 4.5 * s, 1.0 * s, -8.0 * s, -rng.gen_range(0.4..1.1), zc);
-    place(commands, pants, 13.0 * s, 5.0 * s, -10.0 * s, 4.0 * s, rng.gen_range(-0.4..0.4), zc);
-    place(commands, pants, 13.0 * s, 5.0 * s, -10.0 * s, -4.0 * s, rng.gen_range(-0.4..0.4), zc);
-    // Torso.
-    place(commands, dark, 16.0 * s, 14.0 * s, 0.0, 0.0, 0.0, zc + 0.1);
+
+    // A jointed limb built in body-local space: upper segment → joint → lower
+    // segment (bent at the joint) → extremity (hand/foot). `la` is the local
+    // splay angle. Captures the place/round helpers.
+    let limb = |commands: &mut Commands,
+                sx: f32, sy: f32, la: f32, u: f32, l: f32, w: f32,
+                seg: Color, joint: Color, ext: Color, bend: f32| {
+        let (dx, dy) = (la.cos(), la.sin());
+        place(commands, seg, u, w, sx + dx * u * 0.5, sy + dy * u * 0.5, la, zc);
+        round(commands, joint, w * 1.05, w * 1.05, sx + dx * u, sy + dy * u, 0.0, zc + 0.02);
+        let la2 = la + bend;
+        let (ex, ey) = (sx + dx * u, sy + dy * u);
+        let (dx2, dy2) = (la2.cos(), la2.sin());
+        place(commands, seg, l, w * 0.9, ex + dx2 * l * 0.5, ey + dy2 * l * 0.5, la2, zc + 0.01);
+        round(commands, ext, w * 1.15, w * 1.15, ex + dx2 * l, ey + dy2 * l, 0.0, zc + 0.03);
+    };
+
+    // Legs (pants), splayed back and out, knees bent.
+    limb(commands, -5.0 * s, 5.0 * s, 2.4 + rng.gen_range(-0.3..0.3), 8.5 * s, 8.0 * s, 5.2 * s, pants, pants_dark, pants_dark, rng.gen_range(-0.5..0.2));
+    limb(commands, -5.0 * s, -5.0 * s, -2.4 + rng.gen_range(-0.3..0.3), 8.5 * s, 8.0 * s, 5.2 * s, pants, pants_dark, pants_dark, rng.gen_range(-0.2..0.5));
+    // Torso (rounded, clothed) with a centre seam highlight.
+    round(commands, cloth, 17.0 * s, 15.0 * s, 0.0, 0.0, 0.0, zc + 0.1);
+    place(commands, cloth_hi, 3.5 * s, 13.0 * s, -1.0 * s, 0.0, 0.0, zc + 0.11);
+    // Arms (skin), flung out to the sides, elbows bent, hands at the ends.
+    limb(commands, 3.0 * s, 7.0 * s, 1.1 + rng.gen_range(-0.3..0.3), 7.5 * s, 7.0 * s, 4.4 * s, skin, skin_dark, hand_c, rng.gen_range(-0.3..0.6));
+    limb(commands, 3.0 * s, -7.0 * s, -1.1 + rng.gen_range(-0.3..0.3), 7.5 * s, 7.0 * s, 4.4 * s, skin, skin_dark, hand_c, rng.gen_range(-0.6..0.3));
+
+    // Head + face, lolled to one side.
+    let oy: f32 = rng.gen_range(-4.0..4.0);
+    let hx = 13.5 * s;
     if headshot {
-        // Burst skull: a broken rounded shell + bone chips, brains trailing out.
-        round(commands, skin, 10.0 * s, 9.0 * s, 11.0 * s, 0.0, 0.0, zc + 0.2);
-        round(commands, Color::srgb(0.35, 0.05, 0.06), 7.5 * s, 6.5 * s, 12.5 * s, 0.0, 0.0, zc + 0.22);
-        place(commands, bone, 3.0 * s, 2.0 * s, 13.0 * s, 3.0 * s, 0.6, zc + 0.24);
-        place(commands, bone, 3.0 * s, 2.0 * s, 13.0 * s, -3.0 * s, -0.6, zc + 0.24);
-        // Brain/gore trail streaking forward.
+        // Burst skull: broken shell, brain, bone chips, brains trailing out.
+        round(commands, skin, 11.0 * s, 10.0 * s, hx, oy, 0.0, zc + 0.2);
+        round(commands, Color::srgb(0.35, 0.05, 0.06), 8.0 * s, 7.0 * s, hx + 1.5 * s, oy, 0.0, zc + 0.22);
+        place(commands, bone, 3.2 * s, 2.2 * s, hx + 2.0 * s, oy + 3.0 * s, 0.6, zc + 0.24);
+        place(commands, bone, 3.2 * s, 2.2 * s, hx + 2.0 * s, oy - 3.0 * s, -0.6, zc + 0.24);
         let fwd = Vec2::new(ca, sa);
         for _ in 0..8 {
             let d = rng.gen_range(14.0..46.0);
@@ -1335,7 +1420,7 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
             commands.spawn((
                 Sprite {
                     color: Color::srgba(g, g * 0.45, g * 0.5, 0.7),
-                    custom_size: Some(Vec2::splat({let v:f32=rng.gen_range(2.0..4.5);v.round()})),
+                    custom_size: Some(Vec2::splat({ let v: f32 = rng.gen_range(2.0..4.5); v.round() })),
                     ..default()
                 },
                 Transform::from_xyz(pos.x + off.x, pos.y + off.y, Z_DECAL + 1.7),
@@ -1343,13 +1428,25 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
             ));
         }
     } else {
-        // Intact-ish rounded head, lolling to one side, with a hair patch behind
-        // it for the styles that have hair.
-        let oy: f32 = rng.gen_range(-4.0..4.0);
         if look.hair >= 0 {
-            round(commands, look.hair_col, 13.0 * s, 12.0 * s, 10.0 * s, oy, 0.0, zc + 0.19);
+            round(commands, look.hair_col, 14.5 * s, 13.5 * s, hx - 2.0 * s, oy, 0.0, zc + 0.19);
         }
-        round(commands, skin, 13.0 * s, 12.0 * s, 11.5 * s, oy, 0.0, zc + 0.2);
+        round(commands, skin, 14.0 * s, 13.0 * s, hx, oy, 0.0, zc + 0.2);
+        // Face. Some corpses have a partial (torn-away) face showing skull + teeth.
+        let eye = Color::srgb(0.07, 0.05, 0.05);
+        place(commands, skin_dark, 2.0 * s, 3.2 * s, hx + 5.0 * s, oy + 0.5 * s, 0.0, zc + 0.235); // nose
+        round(commands, eye, 2.6 * s, 2.6 * s, hx + 3.0 * s, oy + 3.2 * s, 0.0, zc + 0.24);
+        if rng.gen_bool(0.4) {
+            // Torn half: exposed skull, teeth, and blood where the cheek was.
+            round(commands, bone, 7.0 * s, 8.0 * s, hx + 1.0 * s, oy - 3.5 * s, 0.0, zc + 0.23);
+            for k in 0..3 {
+                place(commands, Color::srgb(0.9, 0.88, 0.8), 1.4 * s, 2.0 * s, hx + 4.2 * s, oy - 5.0 * s + k as f32 * 2.0 * s, 0.0, zc + 0.25);
+            }
+            place(commands, Color::srgb(0.3, 0.02, 0.03), 4.5 * s, 5.5 * s, hx + 1.5 * s, oy - 3.0 * s, 0.3, zc + 0.235);
+        } else {
+            round(commands, eye, 2.6 * s, 2.6 * s, hx + 3.0 * s, oy - 3.2 * s, 0.0, zc + 0.24);
+            place(commands, Color::srgb(0.12, 0.05, 0.06), 4.8 * s, 2.6 * s, hx + 5.2 * s, oy, 0.2, zc + 0.24); // agape mouth
+        }
     }
     // Guts spilling out of the torso: a connected rope of intestine plus loose
     // organ chunks, streaking off to one side as if they slid out when it fell.

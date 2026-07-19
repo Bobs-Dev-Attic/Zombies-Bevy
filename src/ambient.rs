@@ -165,14 +165,17 @@ pub fn scatter_ambient(commands: &mut Commands, art: &Art, world: &World, center
 }
 
 fn spawn_blood_pool(commands: &mut Commands, art: &Art, at: Vec2, scale: f32, rng: &mut impl Rng) {
-    commands.spawn(soft(
-        art,
-        Color::srgba(0.22, 0.01, 0.02, 0.62),
-        30.0 * scale,
-        22.0 * scale,
-        Z_DECAL + 0.5,
-        at.x,
-        at.y,
+    commands.spawn((
+        soft(
+            art,
+            Color::srgba(0.22, 0.01, 0.02, 0.62),
+            30.0 * scale,
+            22.0 * scale,
+            Z_DECAL + 0.5,
+            at.x,
+            at.y,
+        ),
+        crate::combat::BloodDecal,
     ));
     // Pixelated clots around the rim.
     for _ in 0..(6.0 * scale) as i32 {
@@ -192,10 +195,44 @@ fn spawn_blood_pool(commands: &mut Commands, art: &Art, at: Vec2, scale: f32, rn
     }
 }
 
+/// A jointed corpse limb in body-local space (child sprites of the corpse root):
+/// upper segment → joint → bent lower segment → hand/foot. Pushes the ids so the
+/// caller can parent them under the corpse root.
+fn corpse_limb(
+    commands: &mut Commands,
+    parts: &mut Vec<Entity>,
+    art: &Art,
+    sx: f32, sy: f32, la: f32, u: f32, l: f32, w: f32,
+    seg: Color, joint: Color, ext: Color,
+) {
+    let (dx, dy) = (la.cos(), la.sin());
+    parts.push(commands.spawn(block(seg, u, w, sx + dx * u * 0.5, sy + dy * u * 0.5, 0.02, la)).id());
+    parts.push(
+        commands
+            .spawn((
+                Sprite { image: art.circle.clone(), color: joint, custom_size: Some(Vec2::splat(w * 1.05)), ..default() },
+                Transform::from_xyz(sx + dx * u, sy + dy * u, 0.025),
+            ))
+            .id(),
+    );
+    let la2 = la + 0.25;
+    let (ex, ey) = (sx + dx * u, sy + dy * u);
+    let (dx2, dy2) = (la2.cos(), la2.sin());
+    parts.push(commands.spawn(block(seg, l, w * 0.9, ex + dx2 * l * 0.5, ey + dy2 * l * 0.5, 0.021, la2)).id());
+    parts.push(
+        commands
+            .spawn((
+                Sprite { image: art.circle.clone(), color: ext, custom_size: Some(Vec2::splat(w * 1.15)), ..default() },
+                Transform::from_xyz(ex + dx2 * l, ey + dy2 * l, 0.03),
+            ))
+            .id(),
+    );
+}
+
 fn spawn_corpse(commands: &mut Commands, art: &Art, at: Vec2, gutsy: bool, twitchy: bool, rng: &mut impl Rng) {
     let angle = rng.gen_range(0.0..TAU);
     // Blood pool under the body.
-    spawn_blood_pool(commands, art, at, rng.gen_range(1.0..1.7), rng);
+    spawn_blood_pool(commands, art, at, rng.gen_range(1.4..2.2), rng);
 
     let root = commands
         .spawn((
@@ -209,41 +246,58 @@ fn spawn_corpse(commands: &mut Commands, art: &Art, at: Vec2, gutsy: bool, twitc
         ))
         .id();
 
-    // A drab, dead body laid out flat (dark shirt, pale skin, splayed limbs).
+    // A drab, dead body laid out flat — bigger than a standing footprint, with
+    // jointed limbs, a face, and sometimes a torn-away half-face.
+    let sc = 1.4;
     let shirt = Color::srgb(rng.gen_range(0.16..0.34), rng.gen_range(0.14..0.30), rng.gen_range(0.16..0.32));
+    let sh = shirt.to_srgba();
+    let shirt_hi = Color::srgb((sh.red * 1.25).min(1.0), (sh.green * 1.25).min(1.0), (sh.blue * 1.25).min(1.0));
     let skin = Color::srgb(rng.gen_range(0.42..0.55), rng.gen_range(0.42..0.52), rng.gen_range(0.40..0.48));
+    let sk = skin.to_srgba();
+    let skin_d = Color::srgb(sk.red * 0.82, sk.green * 0.82, sk.blue * 0.82);
     let pants = Color::srgb(0.14, 0.14, 0.16);
+    let pants_d = Color::srgb(0.10, 0.10, 0.12);
+    let bone = Color::srgb(0.86, 0.83, 0.74);
+    let eye = Color::srgb(0.07, 0.05, 0.05);
     let mut parts = Vec::new();
-    let torso = commands.spawn(block(shirt, 15.0, 13.0, 0.0, 0.0, 0.02, 0.0)).id();
-    let head = commands
-        .spawn((
-            Sprite { image: art.circle.clone(), color: skin, custom_size: Some(Vec2::splat(11.0)), ..default() },
-            Transform::from_xyz(11.0, 1.0, 0.03),
-            Cleanup,
-        ))
-        .id();
-    let arm1 = commands.spawn(block(skin, 12.0, 4.0, -1.0, 9.0, 0.02, rng.gen_range(0.4..1.0))).id();
-    let arm2 = commands.spawn(block(skin, 12.0, 4.0, -1.0, -9.0, 0.02, -rng.gen_range(0.4..1.0))).id();
-    let leg1 = commands.spawn(block(pants, 13.0, 5.0, -12.0, 4.0, 0.01, rng.gen_range(-0.3..0.3))).id();
-    let leg2 = commands.spawn(block(pants, 13.0, 5.0, -12.0, -4.0, 0.01, rng.gen_range(-0.3..0.3))).id();
-    parts.extend([torso, head, arm1, arm2, leg1, leg2]);
+    // Legs, then torso, then arms.
+    corpse_limb(commands, &mut parts, art, -5.0 * sc, 5.0 * sc, 2.4, 8.5 * sc, 8.0 * sc, 5.2 * sc, pants, pants_d, pants_d);
+    corpse_limb(commands, &mut parts, art, -5.0 * sc, -5.0 * sc, -2.4, 8.5 * sc, 8.0 * sc, 5.2 * sc, pants, pants_d, pants_d);
+    parts.push(commands.spawn((Sprite { image: art.circle.clone(), color: shirt, custom_size: Some(Vec2::new(17.0 * sc, 15.0 * sc)), ..default() }, Transform::from_xyz(0.0, 0.0, 0.02))).id());
+    parts.push(commands.spawn(block(shirt_hi, 3.5 * sc, 13.0 * sc, -1.0 * sc, 0.0, 0.021, 0.0)).id());
+    corpse_limb(commands, &mut parts, art, 3.0 * sc, 7.0 * sc, 1.1, 7.5 * sc, 7.0 * sc, 4.4 * sc, skin, skin_d, skin_d);
+    corpse_limb(commands, &mut parts, art, 3.0 * sc, -7.0 * sc, -1.1, 7.5 * sc, 7.0 * sc, 4.4 * sc, skin, skin_d, skin_d);
+    // Head + face.
+    let hx = 13.5 * sc;
+    parts.push(commands.spawn((Sprite { image: art.circle.clone(), color: skin, custom_size: Some(Vec2::splat(13.0 * sc)), ..default() }, Transform::from_xyz(hx, 1.0, 0.03))).id());
+    parts.push(commands.spawn(block(skin_d, 2.0 * sc, 3.0 * sc, hx + 5.0 * sc, 1.5 * sc, 0.035, 0.0)).id()); // nose
+    parts.push(commands.spawn((Sprite { image: art.circle.clone(), color: eye, custom_size: Some(Vec2::splat(2.6 * sc)), ..default() }, Transform::from_xyz(hx + 3.0 * sc, 1.0 + 3.2 * sc, 0.04))).id());
+    if rng.gen_bool(0.4) {
+        // Torn half: exposed skull + teeth.
+        parts.push(commands.spawn((Sprite { image: art.circle.clone(), color: bone, custom_size: Some(Vec2::new(7.0 * sc, 8.0 * sc)), ..default() }, Transform::from_xyz(hx + 1.0 * sc, 1.0 - 3.5 * sc, 0.032))).id());
+        for k in 0..3 {
+            parts.push(commands.spawn(block(Color::srgb(0.9, 0.88, 0.8), 1.4 * sc, 2.0 * sc, hx + 4.2 * sc, 1.0 - 5.0 * sc + k as f32 * 2.0 * sc, 0.045, 0.0)).id());
+        }
+    } else {
+        parts.push(commands.spawn((Sprite { image: art.circle.clone(), color: eye, custom_size: Some(Vec2::splat(2.6 * sc)), ..default() }, Transform::from_xyz(hx + 3.0 * sc, 1.0 - 3.2 * sc, 0.04))).id());
+        parts.push(commands.spawn(block(Color::srgb(0.12, 0.05, 0.06), 4.8 * sc, 2.6 * sc, hx + 5.2 * sc, 1.0, 0.04, 0.2)).id()); // agape mouth
+    }
 
     if gutsy {
         // Guts spread out of a torn belly — a mess of red/pink entrail blobs.
-        for _ in 0..10 {
-            let o = Vec2::new(rng.gen_range(2.0..20.0), rng.gen_range(-9.0..9.0));
+        for _ in 0..12 {
+            let o = Vec2::new(rng.gen_range(2.0..24.0), rng.gen_range(-11.0..11.0));
             let pink = rng.gen_range(0.35..0.6);
             let g = commands
                 .spawn((
-                    Sprite { image: art.circle.clone(), color: Color::srgb(pink, 0.10, 0.12), custom_size: Some(Vec2::splat(rng.gen_range(3.0..7.0))), ..default() },
-                    Transform::from_xyz(o.x, o.y, 0.04),
-                    Cleanup,
+                    Sprite { image: art.circle.clone(), color: Color::srgb(pink, 0.10, 0.12), custom_size: Some(Vec2::splat(rng.gen_range(3.5..8.0))), ..default() },
+                    Transform::from_xyz(o.x, o.y, 0.05),
                 ))
                 .id();
             parts.push(g);
         }
         // A darker cavity.
-        let cav = commands.spawn(block(Color::srgb(0.20, 0.02, 0.03), 8.0, 7.0, 4.0, 0.0, 0.05, 0.0)).id();
+        let cav = commands.spawn(block(Color::srgb(0.20, 0.02, 0.03), 9.0, 8.0, 4.0, 0.0, 0.055, 0.0)).id();
         parts.push(cav);
     }
 
