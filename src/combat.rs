@@ -788,6 +788,7 @@ pub fn projectile_system(
     mut zombies: Query<(Entity, &mut Zombie, &Transform), Without<Projectile>>,
     mut player_q: Query<(&mut Player, &Transform), (Without<Projectile>, Without<Zombie>)>,
     crows: Query<(Entity, &Transform), (With<crate::ambient::Crow>, Without<Projectile>, Without<Zombie>, Without<Player>)>,
+    cats: Query<(Entity, &Transform, &crate::ambient::Cat), (Without<Projectile>, Without<Zombie>, Without<Player>)>,
 ) {
     let dt = time.delta_secs();
     let mut rng = rand::thread_rng();
@@ -875,7 +876,7 @@ pub fn projectile_system(
                 }
             }
         } else {
-            // Crows can be shot out of the air (feathers + a dead bird).
+            // Crows and cats can be shot (feathers/fur + a small carcass).
             let mut hit_crow = false;
             for (ce, ctf) in crows.iter() {
                 if (ctf.translation.truncate() - next).length() < 9.0 {
@@ -884,6 +885,17 @@ pub fn projectile_system(
                     dead = true;
                     hit_crow = true;
                     break;
+                }
+            }
+            if !hit_crow {
+                for (ce, ctf, cat) in cats.iter() {
+                    if (ctf.translation.truncate() - next).length() < 9.0 {
+                        crate::ambient::kill_cat(&mut commands, ctf.translation.truncate(), cat.fur, &mut rng);
+                        commands.entity(ce).despawn();
+                        dead = true;
+                        hit_crow = true;
+                        break;
+                    }
                 }
             }
             let dir = proj.vel.y.atan2(proj.vel.x);
@@ -1173,7 +1185,7 @@ pub fn zombie_disfigure(
 /// Sprawl a fallen zombie into a jointed corpse: torso, splayed arms and legs, a
 /// head (or a burst skull with a brain trail on a headshot), plus a blood pool
 /// and some spilled guts. Everything fades over ~half a minute.
-fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, angle: f32, look: &crate::enemy::Look, scale: f32, headshot: bool, rng: &mut impl Rng) {
+fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, angle: f32, look: &crate::enemy::Look, scale: f32, headshot: bool, is_dog: bool, rng: &mut impl Rng) {
     // Match the living body's scale (radius-derived), so a corpse is the same
     // size as the zombie that just fell — big for brutes, not shrunk to the build
     // multiplier.
@@ -1181,6 +1193,50 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
     let life = 30.0;
     let rot = angle + rng.gen_range(-0.5..0.5); // fell at a messy angle
     let (ca, sa) = (rot.cos(), rot.sin());
+    // A dog leaves a small sprawled carcass: elongated body, splayed legs, head
+    // and snout, a blood pool and a little spilled gut — no human clothing/ribs.
+    if is_dog {
+        let place = |commands: &mut Commands, c: Color, w: f32, h: f32, ox: f32, oy: f32, extra: f32, z: f32| {
+            let wx = pos.x + ox * ca - oy * sa;
+            let wy = pos.y + ox * sa + oy * ca;
+            commands.spawn((
+                Sprite::from_color(c, Vec2::new(w, h)),
+                Transform {
+                    translation: Vec3::new(wx, wy, z),
+                    rotation: Quat::from_rotation_z(rot + extra),
+                    ..default()
+                },
+                Decal { life },
+            ));
+        };
+        commands.spawn((
+            Sprite {
+                image: art.soft.clone(),
+                color: Color::srgba(0.22, 0.01, 0.02, 0.6),
+                custom_size: Some(Vec2::splat(30.0 * s)),
+                ..default()
+            },
+            Transform::from_xyz(pos.x, pos.y, Z_DECAL + 1.6),
+            Decal { life },
+        ));
+        let fur = look.skin;
+        let dark = look.shirt;
+        let zc = Z_DECAL + 2.0;
+        // Splayed legs.
+        for (ox, oy) in [(6.0, 7.0), (6.0, -7.0), (-7.0, 7.0), (-7.0, -7.0)] {
+            place(commands, fur, 8.0 * s, 3.0 * s, ox * s, oy * s, rng.gen_range(-0.8..0.8), zc);
+        }
+        // Body + head.
+        place(commands, dark, 20.0 * s, 9.0 * s, 0.0, 0.0, 0.0, zc + 0.1);
+        place(commands, fur, 9.0 * s, 8.0 * s, 12.0 * s, rng.gen_range(-3.0..3.0), 0.0, zc + 0.2);
+        place(commands, fur, 6.0 * s, 4.0 * s, 17.0 * s, 0.0, 0.0, zc + 0.19);
+        // A little spilled gut.
+        for _ in 0..rng.gen_range(2..5) {
+            let g: f32 = rng.gen_range(0.36..0.6);
+            place(commands, Color::srgb(g, 0.12, 0.14), rng.gen_range(3.0..5.0) * s, rng.gen_range(2.5..4.0) * s, rng.gen_range(-6.0..4.0) * s, rng.gen_range(-6.0..6.0) * s, rng.gen_range(0.0..3.0), zc + 0.15);
+        }
+        return;
+    }
     let place = |commands: &mut Commands, c: Color, w: f32, h: f32, ox: f32, oy: f32, extra: f32, z: f32| {
         let wx = pos.x + ox * ca - oy * sa;
         let wy = pos.y + ox * sa + oy * ca;
@@ -1423,6 +1479,7 @@ pub fn zombie_death_system(
                     &z.look,
                     z.r / 12.0,
                     z.headshot,
+                    z.kind == crate::enemy::ZKind::Dog,
                     &mut rng,
                 );
             }
