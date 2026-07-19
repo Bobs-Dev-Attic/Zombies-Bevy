@@ -35,6 +35,7 @@ pub struct Player {
     pub rounds: i32,
     pub shells: i32,
     pub rockets: i32,
+    pub fuel: i32,
     pub grenades: i32,
     pub throw_cd: f32, // brief cooldown between grenade throws
 
@@ -91,6 +92,7 @@ impl Default for Player {
             rounds: 96,
             shells: 24,
             rockets: 3,
+            fuel: 200,
             grenades: 4,
             throw_cd: 0.0,
             cooldown: 0.0,
@@ -134,6 +136,7 @@ impl Player {
             Ammo::Rounds => self.rounds,
             Ammo::Shells => self.shells,
             Ammo::Rockets => self.rockets,
+            Ammo::Fuel => self.fuel,
             Ammo::None => 999,
         }
     }
@@ -142,6 +145,7 @@ impl Player {
             Ammo::Rounds => Some(&mut self.rounds),
             Ammo::Shells => Some(&mut self.shells),
             Ammo::Rockets => Some(&mut self.rockets),
+            Ammo::Fuel => Some(&mut self.fuel),
             Ammo::None => None,
         }
     }

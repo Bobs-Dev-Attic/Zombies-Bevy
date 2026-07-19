@@ -179,6 +179,9 @@ pub struct Zombie {
     pub death_t: f32,       // >0 once the ragdoll death has begun (counts up in seconds)
     pub death_spin: f32,    // which way the body topples as it falls
     pub stagger: f32,       // brief flinch/stumble timer from a solid non-lethal hit
+    pub burning: f32,       // seconds of fire left; burns for damage-over-time + ash death
+    pub burn_fx: f32,       // countdown to the next flame/smoke puff while burning
+    pub ash: bool,          // died to fire → leaves a smoldering ash pile, not a corpse
 }
 
 impl Zombie {
@@ -255,6 +258,9 @@ impl Zombie {
             death_t: 0.0,
             death_spin: 0.0,
             stagger: 0.0,
+            burning: 0.0,
+            burn_fx: 0.0,
+            ash: false,
         }
     }
 
@@ -625,6 +631,56 @@ pub fn zombie_gore_trail(
     let dt = time.delta_secs();
     let mut rng = rand::thread_rng();
     for (mut z, tf) in q.iter_mut() {
+        // Fire: a burning zombie takes damage over time and throws flame + smoke.
+        // When the fire kills it, the death system leaves a smoldering ash pile.
+        if z.burning > 0.0 {
+            z.burning = (z.burning - dt).max(0.0);
+            if z.death_t <= 0.0 {
+                z.hp -= 14.0 * dt;
+            }
+            z.burn_fx -= dt;
+            if z.burn_fx <= 0.0 {
+                z.burn_fx = rng.gen_range(0.03..0.08);
+                let p = tf.translation.truncate();
+                let off = Vec2::new(
+                    rng.gen_range(-z.r * 0.5..z.r * 0.5),
+                    rng.gen_range(-z.r * 0.5..z.r * 0.5),
+                );
+                let hot = if rng.gen_bool(0.5) {
+                    Color::srgb(1.0, 0.6, 0.15)
+                } else {
+                    Color::srgb(1.0, 0.85, 0.3)
+                };
+                commands.spawn((
+                    Sprite::from_color(hot, Vec2::splat(rng.gen_range(3.0..6.0))),
+                    Transform::from_xyz(p.x + off.x, p.y + off.y, Z_FX - 2.0),
+                    crate::combat::Particle {
+                        vel: Vec2::new(rng.gen_range(-14.0..14.0), 30.0 + rng.gen_range(0.0..40.0)),
+                        life: rng.gen_range(0.25..0.5),
+                        max_life: 0.5,
+                        drag: 0.9,
+                        gravity: 0.0,
+                        base: hot,
+                    },
+                ));
+                if rng.gen_bool(0.4) {
+                    let g = rng.gen_range(0.12..0.22);
+                    let smoke = Color::srgba(g, g, g, 0.7);
+                    commands.spawn((
+                        Sprite::from_color(smoke, Vec2::splat(rng.gen_range(4.0..8.0))),
+                        Transform::from_xyz(p.x + off.x, p.y + off.y, Z_FX - 1.0),
+                        crate::combat::Particle {
+                            vel: Vec2::new(rng.gen_range(-10.0..10.0), 40.0 + rng.gen_range(0.0..30.0)),
+                            life: rng.gen_range(0.4..0.9),
+                            max_life: 0.9,
+                            drag: 0.92,
+                            gravity: 0.0,
+                            base: smoke,
+                        },
+                    ));
+                }
+            }
+        }
         let moving = z.vel.length_squared() > 25.0;
         z.trail_t -= dt;
         if !moving || z.trail_t > 0.0 {

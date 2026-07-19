@@ -622,8 +622,24 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         group(commands, vec![stock, grip, receiver, sxs_barrel])
     };
 
+    // Flamethrower: a stubby nozzle out front fed off a fat fuel tank, with a
+    // glowing pilot tip at the muzzle.
+    let flamer_g = {
+        let tank = commands
+            .spawn(ellipse(art, Color::srgb(0.40, 0.42, 0.18), 7.0, 11.0, 0.14))
+            .id();
+        commands
+            .entity(tank)
+            .insert(Transform::from_xyz(-4.0, -1.0, 0.14));
+        let body = part(commands, gun_dark, 12.0, 5.0, 5.0, 0.0);
+        let nozzle = part(commands, steel, 8.0, 3.2, 15.0, 0.0);
+        let pilot = part(commands, Color::srgb(0.9, 0.35, 0.1), 2.6, 2.6, 19.0, 0.0);
+        let grip = part(commands, gun_dark, 4.0, 5.5, 2.0, -5.0);
+        group(commands, vec![tank, grip, body, nozzle, pilot])
+    };
+
     let weapon_roots = [
-        melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g, sxs_g, magnum_g,
+        melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g, sxs_g, magnum_g, flamer_g,
     ];
     commands.entity(weapon).add_children(&weapon_roots);
     // The bat shares the melee slot but swaps in its own model.
@@ -1627,15 +1643,18 @@ pub fn animate_zombies(
         let flash = (z.hurt_flash * 8.0).clamp(0.0, 1.0);
         let hp = (z.hp / z.max_hp).clamp(0.0, 1.0);
         let darken = 0.55 + 0.45 * hp;
+        // Fire chars the body toward blackened flesh while it burns.
+        let charred = if z.burning > 0.0 { 0.65 } else { 0.0 };
+        let char_col = Color::srgb(0.07, 0.05, 0.05);
         let shirt = z.look.shirt.to_srgba();
         let base = Color::srgb(shirt.red * darken, shirt.green * darken, shirt.blue * darken);
         if let Ok(mut s) = sprite_q.get_mut(rig.torso) {
-            s.color = mix(base, Color::WHITE, flash);
+            s.color = mix(mix(base, char_col, charred), Color::WHITE, flash);
         }
         if let Ok(mut s) = sprite_q.get_mut(rig.head) {
             let sk = z.look.skin.to_srgba();
             let skb = Color::srgb(sk.red * darken, sk.green * darken, sk.blue * darken);
-            s.color = mix(skb, Color::WHITE, flash);
+            s.color = mix(mix(skb, char_col, charred), Color::WHITE, flash);
         }
     }
 }
