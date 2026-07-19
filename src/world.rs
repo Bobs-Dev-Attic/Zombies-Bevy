@@ -8,12 +8,56 @@ pub enum Cell {
     Wall,
 }
 
+/// Scattered scenery. Solid kinds are circular obstacles that block movement,
+/// bullets, flames and rolling grenades; bushes are passable cover.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PropKind {
+    Tree,
+    Bush,
+    Car,
+    Van,
+    Bench,
+    Dumpster,
+    Barrel,
+    Crate,
+    Hydrant,
+    Table,
+    Sofa,
+}
+
+/// Radius of the collider and whether it blocks movement/shots.
+pub fn prop_spec(kind: PropKind) -> (f32, bool) {
+    match kind {
+        PropKind::Tree => (11.0, true),
+        PropKind::Bush => (15.0, false),
+        PropKind::Car => (23.0, true),
+        PropKind::Van => (27.0, true),
+        PropKind::Bench => (14.0, true),
+        PropKind::Dumpster => (18.0, true),
+        PropKind::Barrel => (9.0, true),
+        PropKind::Crate => (11.0, true),
+        PropKind::Hydrant => (6.0, true),
+        PropKind::Table => (12.0, true),
+        PropKind::Sofa => (16.0, true),
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Prop {
+    pub kind: PropKind,
+    pub pos: Vec2,
+    pub r: f32,
+    pub solid: bool,
+    pub angle: f32,
+}
+
 #[derive(Resource)]
 pub struct World {
     pub cols: usize,
     pub rows: usize,
     pub cells: Vec<Cell>,
     pub spawn: Vec2,
+    pub props: Vec<Prop>,
 }
 
 impl World {
@@ -39,10 +83,16 @@ impl World {
         ((p.x / TILE).floor() as isize, (-p.y / TILE).floor() as isize)
     }
 
-    /// Is this world point inside a solid tile? (used by projectiles)
+    /// Is this world point inside a solid tile or a solid prop? (used by
+    /// projectiles, flames, casings and rolling grenades)
     pub fn blocks_point(&self, p: Vec2) -> bool {
         let (c, r) = self.world_to_tile(p);
-        self.solid(c, r)
+        if self.solid(c, r) {
+            return true;
+        }
+        self.props
+            .iter()
+            .any(|pr| pr.solid && p.distance(pr.pos) < pr.r)
     }
 
     /// Push a circle out of any solid tiles it overlaps. Returns resolved center.
@@ -72,6 +122,22 @@ impl World {
                             p.y += if p.y - min.y < max.y - p.y { -(dy + radius) } else { dy + radius };
                         }
                     }
+                }
+            }
+        }
+        // Push out of any solid props (circle-vs-circle).
+        for prop in &self.props {
+            if !prop.solid {
+                continue;
+            }
+            let delta = p - prop.pos;
+            let d = delta.length();
+            let rr = radius + prop.r;
+            if d < rr {
+                if d > 0.0001 {
+                    p += delta / d * (rr - d);
+                } else {
+                    p += Vec2::new(rr, 0.0);
                 }
             }
         }
@@ -134,11 +200,273 @@ pub fn generate_world() -> World {
         center.0 as f32 * TILE + TILE * 0.5,
         -(center.1 as f32 * TILE + TILE * 0.5),
     );
-    World { cols, rows, cells, spawn }
+    let mut world = World { cols, rows, cells, spawn, props: Vec::new() };
+
+    // Scatter scenery — trees, bushes, parked vehicles and street furniture — on
+    // open floor, clear of the spawn and not piled on top of each other.
+    let kinds = [
+        PropKind::Tree,
+        PropKind::Bush,
+        PropKind::Bush,
+        PropKind::Car,
+        PropKind::Van,
+        PropKind::Bench,
+        PropKind::Dumpster,
+        PropKind::Barrel,
+        PropKind::Crate,
+        PropKind::Hydrant,
+        PropKind::Table,
+        PropKind::Sofa,
+    ];
+    let want = 36;
+    let mut attempts = 0;
+    while world.props.len() < want && attempts < 1200 {
+        attempts += 1;
+        let c = rng.gen_range(2..cols - 2);
+        let r = rng.gen_range(2..rows - 2);
+        let pos = world.tile_center(c, r);
+        if pos.distance(spawn) < 150.0 {
+            continue;
+        }
+        let kind = kinds[rng.gen_range(0..kinds.len())];
+        let (pr, solid) = prop_spec(kind);
+        // The tile and its immediate neighbours must be clear floor so a big prop
+        // isn't jammed into a wall.
+        let mut ok = true;
+        'chk: for dr in -1..=1 {
+            for dc in -1..=1 {
+                if world.solid(c as isize + dc, r as isize + dr) {
+                    ok = false;
+                    break 'chk;
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        // Don't overlap another prop.
+        if world
+            .props
+            .iter()
+            .any(|p| p.pos.distance(pos) < p.r + pr + 14.0)
+        {
+            continue;
+        }
+        let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+        world.props.push(Prop { kind, pos, r: pr, solid, angle });
+    }
+
+    world
 }
 
 #[derive(Component)]
 pub struct WorldTile;
+
+// --- Prop art helpers: spawn a single local-space sprite child, return its id. ---
+fn pr_rect(commands: &mut Commands, c: Color, w: f32, h: f32, x: f32, y: f32, z: f32) -> Entity {
+    commands
+        .spawn((
+            Sprite::from_color(c, Vec2::new(w, h)),
+            Transform::from_xyz(x, y, z),
+        ))
+        .id()
+}
+fn pr_round(commands: &mut Commands, art: &crate::art::Art, c: Color, w: f32, h: f32, x: f32, y: f32, z: f32) -> Entity {
+    commands
+        .spawn((
+            Sprite {
+                image: art.circle.clone(),
+                color: c,
+                custom_size: Some(Vec2::new(w, h)),
+                ..default()
+            },
+            Transform::from_xyz(x, y, z),
+        ))
+        .id()
+}
+fn pr_soft(commands: &mut Commands, art: &crate::art::Art, c: Color, w: f32, h: f32, x: f32, y: f32, z: f32) -> Entity {
+    commands
+        .spawn((
+            Sprite {
+                image: art.rounded.clone(),
+                color: c,
+                custom_size: Some(Vec2::new(w, h)),
+                ..default()
+            },
+            Transform::from_xyz(x, y, z),
+        ))
+        .id()
+}
+
+/// Draw all of the world's props (trees, bushes, vehicles, furniture). Each prop
+/// is a rotated root with layered child sprites, plus a soft cast shadow.
+pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art) {
+    let mut rng = rand::thread_rng();
+    for prop in &world.props {
+        let pos = prop.pos;
+        let z = depth_z(Z_PROP, pos.y);
+        // Soft cast shadow on the ground.
+        let (sw, sh) = match prop.kind {
+            PropKind::Car => (58.0, 30.0),
+            PropKind::Van => (66.0, 34.0),
+            PropKind::Tree => (44.0, 40.0),
+            _ => (prop.r * 2.6, prop.r * 2.0),
+        };
+        commands.spawn((
+            Sprite {
+                image: art.soft.clone(),
+                color: Color::srgba(0.0, 0.0, 0.0, 0.4),
+                custom_size: Some(Vec2::new(sw, sh)),
+                ..default()
+            },
+            Transform::from_xyz(pos.x + 5.0, pos.y - prop.r * 0.5, Z_DECAL + 4.0),
+            WorldTile,
+        ));
+        let root = commands
+            .spawn((
+                Transform::from_xyz(pos.x, pos.y, z)
+                    .with_rotation(Quat::from_rotation_z(prop.angle)),
+                Visibility::default(),
+                WorldTile,
+            ))
+            .id();
+        let mut parts: Vec<Entity> = Vec::new();
+        match prop.kind {
+            PropKind::Tree => {
+                // Trunk + layered canopy blobs.
+                let trunk = Color::srgb(0.28, 0.19, 0.11);
+                parts.push(pr_rect(commands, trunk, 8.0, 8.0, 0.0, 0.0, 0.1));
+                let g1 = Color::srgb(0.12, 0.28, 0.13);
+                let g2 = Color::srgb(0.16, 0.35, 0.17);
+                parts.push(pr_round(commands, art, g1, 40.0, 40.0, 0.0, 0.0, 0.3));
+                for _ in 0..4 {
+                    let a = rng.gen_range(0.0..std::f32::consts::TAU);
+                    let d = rng.gen_range(6.0..12.0);
+                    parts.push(pr_round(
+                        commands,
+                        art,
+                        if rng.gen_bool(0.5) { g1 } else { g2 },
+                        rng.gen_range(16.0..24.0),
+                        rng.gen_range(16.0..24.0),
+                        a.cos() * d,
+                        a.sin() * d,
+                        0.35 + rng.gen_range(0.0..0.1),
+                    ));
+                }
+            }
+            PropKind::Bush => {
+                let g1 = Color::srgb(0.14, 0.30, 0.15);
+                let g2 = Color::srgb(0.18, 0.36, 0.18);
+                for _ in 0..5 {
+                    let a = rng.gen_range(0.0..std::f32::consts::TAU);
+                    let d = rng.gen_range(0.0..9.0);
+                    parts.push(pr_round(
+                        commands,
+                        art,
+                        if rng.gen_bool(0.5) { g1 } else { g2 },
+                        rng.gen_range(12.0..20.0),
+                        rng.gen_range(12.0..20.0),
+                        a.cos() * d,
+                        a.sin() * d,
+                        0.2 + rng.gen_range(0.0..0.1),
+                    ));
+                }
+            }
+            PropKind::Car | PropKind::Van => {
+                let van = prop.kind == PropKind::Van;
+                let len = if van { 56.0 } else { 46.0 };
+                let wid = if van { 24.0 } else { 22.0 };
+                let bodies = [
+                    Color::srgb(0.5, 0.15, 0.14),
+                    Color::srgb(0.15, 0.28, 0.45),
+                    Color::srgb(0.2, 0.22, 0.25),
+                    Color::srgb(0.55, 0.5, 0.2),
+                    Color::srgb(0.3, 0.35, 0.32),
+                ];
+                let body = bodies[rng.gen_range(0..bodies.len())];
+                let dark = {
+                    let s = body.to_srgba();
+                    Color::srgb(s.red * 0.6, s.green * 0.6, s.blue * 0.6)
+                };
+                // Wheels poking out under the body.
+                let blk = Color::srgb(0.05, 0.05, 0.06);
+                let wx = len * 0.3;
+                let wy = wid * 0.5 + 1.0;
+                for (sx, sy) in [(wx, wy), (wx, -wy), (-wx, wy), (-wx, -wy)] {
+                    parts.push(pr_rect(commands, blk, 7.0, 4.0, sx, sy, 0.1));
+                }
+                // Body.
+                parts.push(pr_soft(commands, art, body, len, wid, 0.0, 0.0, 0.3));
+                // Cabin / roof.
+                let cab_len = if van { len * 0.5 } else { len * 0.42 };
+                parts.push(pr_soft(commands, art, dark, cab_len, wid * 0.82, if van { -len * 0.12 } else { -2.0 }, 0.0, 0.34));
+                // Windows (dark glass).
+                let glass = Color::srgb(0.1, 0.13, 0.17);
+                parts.push(pr_rect(commands, glass, cab_len * 0.44, wid * 0.66, cab_len * 0.28 - if van { len * 0.12 } else { 2.0 }, 0.0, 0.36));
+                if !van {
+                    parts.push(pr_rect(commands, glass, cab_len * 0.34, wid * 0.66, -cab_len * 0.34 - 2.0, 0.0, 0.36));
+                }
+                // Headlights at the front (local +X).
+                let lit = Color::srgb(0.9, 0.88, 0.6);
+                parts.push(pr_rect(commands, lit, 2.5, 3.0, len * 0.5 - 1.5, wid * 0.3, 0.35));
+                parts.push(pr_rect(commands, lit, 2.5, 3.0, len * 0.5 - 1.5, -wid * 0.3, 0.35));
+            }
+            PropKind::Bench => {
+                let wood = Color::srgb(0.35, 0.22, 0.12);
+                let metal = Color::srgb(0.12, 0.12, 0.14);
+                parts.push(pr_rect(commands, metal, 30.0, 12.0, 0.0, 0.0, 0.2));
+                for i in 0..3 {
+                    parts.push(pr_rect(commands, wood, 28.0, 2.6, 0.0, -4.0 + i as f32 * 4.0, 0.3));
+                }
+            }
+            PropKind::Dumpster => {
+                let body = Color::srgb(0.15, 0.32, 0.2);
+                let lid = Color::srgb(0.1, 0.22, 0.14);
+                parts.push(pr_rect(commands, body, 30.0, 22.0, 0.0, 0.0, 0.2));
+                parts.push(pr_rect(commands, lid, 32.0, 8.0, 0.0, 7.0, 0.3));
+                parts.push(pr_rect(commands, Color::srgb(0.08, 0.16, 0.1), 30.0, 2.0, 0.0, -2.0, 0.31));
+            }
+            PropKind::Barrel => {
+                let rust = Color::srgb(0.4, 0.3, 0.16);
+                parts.push(pr_round(commands, art, rust, 18.0, 18.0, 0.0, 0.0, 0.2));
+                parts.push(pr_round(commands, art, Color::srgb(0.5, 0.4, 0.22), 12.0, 12.0, 0.0, 0.0, 0.25));
+                parts.push(pr_rect(commands, Color::srgb(0.2, 0.15, 0.08), 18.0, 2.0, 0.0, 3.0, 0.26));
+            }
+            PropKind::Crate => {
+                let wood = Color::srgb(0.42, 0.3, 0.16);
+                let edge = Color::srgb(0.3, 0.21, 0.11);
+                parts.push(pr_rect(commands, wood, 22.0, 22.0, 0.0, 0.0, 0.2));
+                parts.push(pr_rect(commands, edge, 22.0, 3.0, 0.0, 8.0, 0.25));
+                parts.push(pr_rect(commands, edge, 22.0, 3.0, 0.0, -8.0, 0.25));
+                parts.push(pr_rect(commands, edge, 3.0, 22.0, 0.0, 0.0, 0.25));
+            }
+            PropKind::Hydrant => {
+                let red = Color::srgb(0.7, 0.12, 0.1);
+                parts.push(pr_round(commands, art, red, 11.0, 12.0, 0.0, 0.0, 0.2));
+                parts.push(pr_rect(commands, Color::srgb(0.5, 0.08, 0.07), 5.0, 3.0, 6.0, 0.0, 0.25));
+                parts.push(pr_round(commands, art, Color::srgb(0.8, 0.2, 0.15), 5.0, 5.0, 0.0, 6.0, 0.26));
+            }
+            PropKind::Table => {
+                let wood = Color::srgb(0.36, 0.24, 0.14);
+                parts.push(pr_round(commands, art, Color::srgb(0.2, 0.14, 0.08), 26.0, 26.0, 0.0, 0.0, 0.2));
+                parts.push(pr_round(commands, art, wood, 22.0, 22.0, 0.0, 0.0, 0.25));
+            }
+            PropKind::Sofa => {
+                let fab = Color::srgb(0.3, 0.26, 0.35);
+                let fab2 = Color::srgb(0.36, 0.31, 0.42);
+                parts.push(pr_soft(commands, art, fab, 30.0, 22.0, 0.0, 0.0, 0.2));
+                // Back + arms.
+                parts.push(pr_rect(commands, fab2, 30.0, 6.0, 0.0, -8.0, 0.26));
+                parts.push(pr_rect(commands, fab2, 6.0, 22.0, -12.0, 0.0, 0.26));
+                parts.push(pr_rect(commands, fab2, 6.0, 22.0, 12.0, 0.0, 0.26));
+                // Cushions.
+                parts.push(pr_soft(commands, art, fab2, 11.0, 12.0, -6.0, 2.0, 0.28));
+                parts.push(pr_soft(commands, art, fab2, 11.0, 12.0, 6.0, 2.0, 0.28));
+            }
+        }
+        commands.entity(root).add_children(&parts);
+    }
+}
 
 /// Spawn floor + wall sprites once when the game starts. `soft` is the shared
 /// radial-gradient texture used for soft cast shadows.

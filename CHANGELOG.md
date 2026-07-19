@@ -4,6 +4,18 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.22.0]
+
+### Added
+- **Props everywhere** — the streets are now dressed with **trees, bushes, parked
+  cars and vans, benches, dumpsters, barrels, crates, fire hydrants, tables and
+  sofas**. Solid props are real cover: they block movement, stop bullets and
+  flames, and rolling grenades bounce off them; bushes are passable. Props are
+  scattered clear of your spawn and cast soft shadows.
+
+_Second slice of the big batch. Still to come: distinct scenes (house /
+neighborhood / park layouts) and zombie dogs & cats._
+
 ## [0.21.0]
 
 ### Added
