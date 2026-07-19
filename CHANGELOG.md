@@ -4,6 +4,28 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.28.0]
+
+### Added
+- **Endless world (chunk streaming)** — the map is no longer a fixed arena. The
+  world is now generated in 20x20-tile **chunks** around the player and streamed
+  in and out as you move, so you can walk in any direction forever. Each chunk is
+  **deterministically generated** from the world seed, so the same place always
+  looks the same. Every scene (Streets, Park, Neighborhood) keeps its own
+  layout style as it tiles outward — building blocks, park sheds, house rings.
+
+### Changed
+- **Player-centred radar** — because the world is endless, the minimap is now a
+  **radar** fixed on the player: you sit at the centre, nearby zombies show as
+  dots within range, and the objective clamps to the rim to point the way.
+- **Objectives roam** — extraction waypoints are now picked in open ground around
+  wherever you currently are, leading you across the endless map.
+
+### Performance
+- Each chunk's floor is drawn as a **single textured sprite** instead of one per
+  tile, and the zombie **flow field** is computed only in a window around the
+  player — both keep the endless world cheap to run.
+
 ## [0.27.0]
 
 ### Added
