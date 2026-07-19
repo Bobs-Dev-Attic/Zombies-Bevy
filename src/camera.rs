@@ -1,7 +1,46 @@
 use crate::common::*;
 use crate::player::Player;
+use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use rand::Rng;
+
+/// Base orthographic scale at zoom level 1.0 (smaller = closer).
+const BASE_SCALE: f32 = 0.62;
+
+/// Zoom the camera: pinch with two fingers on touch, or the -/= keys on desktop.
+pub fn zoom_control(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
+    mut zoom: ResMut<Zoom>,
+    mut prev_pinch: Local<f32>,
+    mut proj_q: Query<&mut Projection, With<MainCamera>>,
+) {
+    let dt = time.delta_secs();
+    if keys.pressed(KeyCode::Minus) || keys.pressed(KeyCode::NumpadSubtract) {
+        zoom.level -= dt * 1.3;
+    }
+    if keys.pressed(KeyCode::Equal) || keys.pressed(KeyCode::NumpadAdd) {
+        zoom.level += dt * 1.3;
+    }
+    // Pinch-to-zoom: change in the gap between two fingers scales the zoom.
+    let pts: Vec<Vec2> = touches.iter().map(|t| t.position()).collect();
+    if pts.len() >= 2 {
+        let d = pts[0].distance(pts[1]);
+        if *prev_pinch > 1.0 {
+            zoom.level *= 1.0 + (d - *prev_pinch) * 0.004;
+        }
+        *prev_pinch = d;
+    } else {
+        *prev_pinch = 0.0;
+    }
+    zoom.level = zoom.level.clamp(0.6, 2.4);
+    if let Ok(mut proj) = proj_q.single_mut() {
+        if let Projection::Orthographic(o) = &mut *proj {
+            o.scale = BASE_SCALE / zoom.level;
+        }
+    }
+}
 
 #[derive(Component)]
 pub struct MainCamera;

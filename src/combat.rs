@@ -177,16 +177,45 @@ fn blood_burst(commands: &mut Commands, pos: Vec2, dir: f32, amount: u32) {
             0.0,
         );
     }
-    // A lingering ground stain.
-    commands.spawn((
-        Sprite {
-            color: Color::srgba(0.30, 0.02, 0.03, 0.7),
-            custom_size: Some(Vec2::splat(rng.gen_range(10.0..18.0))),
-            ..default()
-        },
-        Transform::from_xyz(pos.x, pos.y, Z_DECAL + rng.gen_range(0.0..1.0)),
-        Decal { life: 14.0 },
-    ));
+    // A lingering ground stain, built from many small blobs so it reads as a
+    // splatter of pooling blood rather than one flat square.
+    let fwd = Vec2::new(dir.cos(), dir.sin());
+    // 1) A central irregular pool: a few overlapping dark blobs.
+    let pool = 2 + amount / 4;
+    for _ in 0..pool {
+        let o = Vec2::new(rng.gen_range(-6.0..6.0), rng.gen_range(-6.0..6.0));
+        let d: f32 = rng.gen_range(0.16..0.34);
+        commands.spawn((
+            Sprite {
+                color: Color::srgba(0.24 + d * 0.4, 0.015, 0.02, rng.gen_range(0.6..0.82)),
+                custom_size: Some(Vec2::new(rng.gen_range(7.0..15.0), rng.gen_range(6.0..13.0))),
+                ..default()
+            },
+            Transform::from_xyz(pos.x + o.x, pos.y + o.y, Z_DECAL + rng.gen_range(0.0..1.0))
+                .with_rotation(Quat::from_rotation_z(rng.gen_range(0.0..std::f32::consts::TAU))),
+            Decal { life: rng.gen_range(16.0..30.0) },
+        ));
+    }
+    // 2) A directional cast-off spray: small droplets thrown along `dir`, getting
+    //    finer and more spread the farther out they land.
+    let drops = 6 + amount;
+    for _ in 0..drops {
+        let d = rng.gen_range(4.0..46.0);
+        let spread = 0.15 + d * 0.012;
+        let a = dir + rng.gen_range(-spread..spread);
+        let off = Vec2::new(a.cos(), a.sin()) * d
+            + fwd * rng.gen_range(0.0..8.0);
+        let sz: f32 = rng.gen_range(1.5..5.0) * (1.0 - d / 70.0).max(0.35);
+        commands.spawn((
+            Sprite {
+                color: Color::srgba(0.34, 0.02, 0.03, rng.gen_range(0.45..0.75)),
+                custom_size: Some(Vec2::splat(sz.max(1.0))),
+                ..default()
+            },
+            Transform::from_xyz(pos.x + off.x, pos.y + off.y, Z_DECAL + rng.gen_range(0.1..1.0)),
+            Decal { life: rng.gen_range(10.0..20.0) },
+        ));
+    }
 }
 
 /// A headshot: brains, skull chips and a red mist blow out along `dir` (the far
@@ -910,7 +939,8 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
             Decal { life },
         ));
     };
-    // Blood pool under the body (soft gradient).
+    // Blood pool under the body (soft gradient), plus a couple of smaller
+    // offset pools so the edge is ragged and it looks like it spread unevenly.
     commands.spawn((
         Sprite {
             image: art.soft.clone(),
@@ -921,6 +951,19 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
         Transform::from_xyz(pos.x, pos.y, Z_DECAL + 1.6),
         Decal { life },
     ));
+    for _ in 0..rng.gen_range(2..5) {
+        let o = Vec2::new(rng.gen_range(-16.0..16.0), rng.gen_range(-16.0..16.0)) * s;
+        commands.spawn((
+            Sprite {
+                image: art.soft.clone(),
+                color: Color::srgba(0.20, 0.008, 0.015, rng.gen_range(0.32..0.55)),
+                custom_size: Some(Vec2::splat(rng.gen_range(16.0..30.0) * s)),
+                ..default()
+            },
+            Transform::from_xyz(pos.x + o.x, pos.y + o.y, Z_DECAL + 1.55),
+            Decal { life },
+        ));
+    }
     let shirt = look.shirt.to_srgba();
     let dark = Color::srgb(shirt.red * 0.5, shirt.green * 0.5, shirt.blue * 0.5);
     let skin = look.skin;
@@ -960,15 +1003,48 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
         // Intact-ish head, lolling to one side.
         place(commands, skin, 11.0 * s, 11.0 * s, 11.0 * s, rng.gen_range(-4.0..4.0), 0.0, zc + 0.2);
     }
-    // A little spilled gut/organ mess and exposed rib bones by the torso.
-    for _ in 0..rng.gen_range(3..7) {
-        let ox = rng.gen_range(-4.0..8.0) * s;
-        let oy = rng.gen_range(-8.0..8.0) * s;
-        let pink = rng.gen_range(0.4..0.62);
-        place(commands, Color::srgb(pink, 0.12, 0.14), rng.gen_range(3.0..6.0) * s, rng.gen_range(3.0..5.0) * s, ox, oy, rng.gen_range(0.0..3.0), zc + 0.15);
+    // Guts spilling out of the torso: a connected rope of intestine plus loose
+    // organ chunks, streaking off to one side as if they slid out when it fell.
+    let spill = rng.gen_range(0.0..TAU);
+    let sdir = Vec2::new(spill.cos(), spill.sin());
+    let coils = rng.gen_range(4..8);
+    for i in 0..coils {
+        let t = i as f32 / coils as f32;
+        // Wander outward with a sideways wobble so it coils rather than lines up.
+        let along = 4.0 + t * 24.0;
+        let side = (i as f32 * 1.7).sin() * 6.0;
+        let perp = Vec2::new(-sdir.y, sdir.x);
+        let off = sdir * along + perp * side;
+        let g = 0.42 + rng.gen_range(0.0..0.16);
+        place(
+            commands,
+            Color::srgb(g, 0.14, 0.15),
+            rng.gen_range(4.0..7.0) * s,
+            rng.gen_range(3.0..4.5) * s,
+            off.x * s,
+            off.y * s,
+            rng.gen_range(0.0..TAU),
+            zc + 0.15,
+        );
     }
-    place(commands, bone, 5.0 * s, 1.1 * s, 3.0 * s, 1.0 * s, 0.1, zc + 0.16);
-    place(commands, bone, 5.0 * s, 1.1 * s, 3.0 * s, -1.5 * s, -0.1, zc + 0.16);
+    // Loose organ chunks scattered near the belly.
+    for _ in 0..rng.gen_range(3..7) {
+        let ox = rng.gen_range(-5.0..9.0) * s;
+        let oy = rng.gen_range(-9.0..9.0) * s;
+        let pink = rng.gen_range(0.36..0.6);
+        place(commands, Color::srgb(pink, 0.1, 0.13), rng.gen_range(3.0..6.0) * s, rng.gen_range(3.0..5.0) * s, ox, oy, rng.gen_range(0.0..3.0), zc + 0.16);
+    }
+    // A dark clotted blood streak pouring from the wound along the spill.
+    for i in 0..rng.gen_range(3..6) {
+        let d = 3.0 + i as f32 * 6.0;
+        let off = sdir * d;
+        place(commands, Color::srgb(0.18, 0.01, 0.02), rng.gen_range(3.0..5.5) * s, rng.gen_range(2.0..3.5) * s, off.x * s, off.y * s, spill, zc + 0.14);
+    }
+    // Exposed rib bones through the torn torso.
+    place(commands, bone, 5.0 * s, 1.1 * s, 3.0 * s, 1.0 * s, 0.1, zc + 0.18);
+    place(commands, bone, 5.0 * s, 1.1 * s, 3.0 * s, -1.5 * s, -0.1, zc + 0.18);
+    place(commands, bone, 4.0 * s, 1.0 * s, 5.0 * s, 2.5 * s, 0.15, zc + 0.18);
+    place(commands, bone, 4.0 * s, 1.0 * s, 5.0 * s, -3.0 * s, -0.15, zc + 0.18);
 }
 
 /// Turn dead zombies into corpses + gore and bump the score.

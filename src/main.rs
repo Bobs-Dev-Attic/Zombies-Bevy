@@ -46,6 +46,7 @@ fn main() {
         .init_resource::<hud::HurtFx>()
         .init_resource::<hud::Concussion>()
         .init_resource::<nav::Objective>()
+        .init_resource::<Zoom>()
         .init_resource::<Settings>()
         .add_event::<enemy::SpitEvent>()
         .add_event::<combat::Explosion>()
@@ -128,6 +129,7 @@ fn main() {
                 art::update_gear_visuals,
                 nav::objective_system,
                 nav::minimap_system,
+                camera::zoom_control,
             )
                 .after(player::player_update)
                 .run_if(in_state(GameState::Playing)),
