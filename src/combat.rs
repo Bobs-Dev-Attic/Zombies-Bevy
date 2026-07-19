@@ -145,6 +145,87 @@ pub struct Explosion {
     pub sever: f32,
 }
 
+/// A thrown grenade: flies out, slows to a roll, and detonates when the fuse
+/// burns down (or immediately if it rolls onto the player's foe pile — no, just
+/// the fuse). It blinks faster as the fuse runs low.
+#[derive(Component)]
+pub struct Grenade {
+    pub vel: Vec2,
+    pub fuse: f32,
+    pub spin: f32,
+}
+
+/// Throw grenades (G / F) and drive the ones in flight; on a spent fuse they
+/// emit an Explosion, reusing the same blast path as the bazooka.
+pub fn grenade_system(
+    time: Res<Time>,
+    input: Res<InputState>,
+    world: Res<World>,
+    mut commands: Commands,
+    mut explosions: EventWriter<Explosion>,
+    mut player_q: Query<(&mut Player, &Transform)>,
+    mut grenades: Query<(Entity, &mut Grenade, &mut Transform), Without<Player>>,
+) {
+    let dt = time.delta_secs();
+    let mut rng = rand::thread_rng();
+
+    // Throw.
+    if let Ok((mut p, ptf)) = player_q.single_mut() {
+        if input.throw && p.stun <= 0.0 && p.throw_cd <= 0.0 && p.grenades > 0 {
+            p.grenades -= 1;
+            p.throw_cd = 0.5;
+            let pos = ptf.translation.truncate();
+            let angle = p.angle;
+            let fwd = Vec2::new(angle.cos(), angle.sin());
+            let start = pos + fwd * 18.0;
+            let body = Color::srgb(0.16, 0.24, 0.14); // dark olive pineapple
+            let grenade = commands
+                .spawn((
+                    Sprite::from_color(body, Vec2::splat(6.5)),
+                    Transform::from_xyz(start.x, start.y, Z_PROJECTILE),
+                    Grenade {
+                        vel: fwd * 360.0,
+                        fuse: 1.15,
+                        spin: rng.gen_range(-8.0..8.0),
+                    },
+                ))
+                .id();
+            // A little top nub so it reads as a grenade, not a pebble.
+            let nub = commands
+                .spawn((
+                    Sprite::from_color(Color::srgb(0.3, 0.3, 0.32), Vec2::new(2.5, 2.0)),
+                    Transform::from_xyz(0.0, 3.5, 0.05),
+                ))
+                .id();
+            commands.entity(grenade).add_child(nub);
+        }
+    }
+
+    // Update in-flight grenades.
+    for (e, mut g, mut tf) in grenades.iter_mut() {
+        g.fuse -= dt;
+        // Friction: it slows to a roll after the throw.
+        let vel = g.vel * (1.0 - (dt * 2.4).clamp(0.0, 1.0));
+        g.vel = vel;
+        let cur = tf.translation.truncate();
+        let resolved = world.collide(cur + vel * dt, 3.0);
+        tf.translation.x = resolved.x;
+        tf.translation.y = resolved.y;
+        tf.rotation *= Quat::from_rotation_z(g.spin * dt);
+        if g.fuse <= 0.0 {
+            explosions.write(Explosion {
+                pos: resolved,
+                radius: 82.0,
+                damage: 95.0,
+                knockback: 260.0,
+                sever: 0.5,
+            });
+            commands.entity(e).despawn();
+        }
+    }
+}
+
+
 fn spawn_particle(commands: &mut Commands, pos: Vec2, vel: Vec2, color: Color, size: f32, life: f32, gravity: f32) {
     commands.spawn((
         Sprite::from_color(color, Vec2::splat(size)),
@@ -328,6 +409,7 @@ pub fn firing_system(
         WeaponKind::Shotgun => (37.0, 1.15),
         WeaponKind::Sxs => (36.0, 1.25),
         WeaponKind::Launcher => (50.0, 1.8),
+        WeaponKind::Magnum => (40.0, 1.2),
         _ => (34.0, 1.0), // pistol
     };
     let muzzle = pos + Vec2::new(angle.cos(), angle.sin()) * muzzle_dist;
@@ -364,15 +446,25 @@ pub fn firing_system(
 
     // Ranged: consume ammo, recoil, muzzle, casing, projectiles.
     let slot = p.current;
-    p.clip[slot] -= 1;
+    // The side-by-side fires BOTH barrels in a single pull — it dumps every
+    // chambered shell at once and then runs dry to reload. Everything else fires
+    // one round per shot.
+    let shots = if w.kind == WeaponKind::Sxs {
+        p.clip[slot].max(1)
+    } else {
+        1
+    };
+    p.clip[slot] = (p.clip[slot] - shots).max(0);
     p.recoil = 1.0;
     p.muzzle = 0.06;
     shake.add(if w.explosive > 0.0 { 0.5 } else { 0.12 + w.knockback * 0.0006 });
 
     let mut rng = rand::thread_rng();
     // Eject a casing from the gun's breech (out to the right side of the slide),
-    // flung a good distance with a little tumble.
-    {
+    // flung a good distance with a little tumble. The break-action side-by-side
+    // holds onto its shells until the breech is cracked open to reload, so it
+    // does NOT throw a casing on firing.
+    if w.kind != WeaponKind::Sxs {
         let ca = angle + std::f32::consts::FRAC_PI_2 + rng.gen_range(-0.3..0.3);
         let fwd = Vec2::new(angle.cos(), angle.sin());
         let side = Vec2::new((angle + std::f32::consts::FRAC_PI_2).cos(), (angle + std::f32::consts::FRAC_PI_2).sin());
@@ -431,7 +523,8 @@ pub fn firing_system(
         }
     }
 
-    for _ in 0..w.pellets {
+    // A side-by-side dumping both barrels throws double the buckshot at once.
+    for _ in 0..(w.pellets * shots as u32) {
         // Guard against a zero-spread weapon (e.g. the bazooka): sampling an
         // empty `-0.0..0.0` range panics rand and would crash the game.
         let a = if w.spread > 0.0 {
@@ -967,8 +1060,11 @@ pub fn zombie_disfigure(
 /// Sprawl a fallen zombie into a jointed corpse: torso, splayed arms and legs, a
 /// head (or a burst skull with a brain trail on a headshot), plus a blood pool
 /// and some spilled guts. Everything fades over ~half a minute.
-fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, angle: f32, look: &crate::enemy::Look, headshot: bool, rng: &mut impl Rng) {
-    let s = look.size;
+fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, angle: f32, look: &crate::enemy::Look, scale: f32, headshot: bool, rng: &mut impl Rng) {
+    // Match the living body's scale (radius-derived), so a corpse is the same
+    // size as the zombie that just fell — big for brutes, not shrunk to the build
+    // multiplier.
+    let s = scale;
     let life = 30.0;
     let rot = angle + rng.gen_range(-0.5..0.5); // fell at a messy angle
     let (ca, sa) = (rot.cos(), rot.sin());
@@ -977,6 +1073,26 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
         let wy = pos.y + ox * sa + oy * ca;
         commands.spawn((
             Sprite::from_color(c, Vec2::new(w, h)),
+            Transform {
+                translation: Vec3::new(wx, wy, z),
+                rotation: Quat::from_rotation_z(rot + extra),
+                ..default()
+            },
+            Decal { life },
+        ));
+    };
+    // Rounded piece (uses the circle texture) — for the head/skull so it reads as
+    // an actual head rather than a flat square.
+    let round = |commands: &mut Commands, c: Color, w: f32, h: f32, ox: f32, oy: f32, extra: f32, z: f32| {
+        let wx = pos.x + ox * ca - oy * sa;
+        let wy = pos.y + ox * sa + oy * ca;
+        commands.spawn((
+            Sprite {
+                image: art.circle.clone(),
+                color: c,
+                custom_size: Some(Vec2::new(w, h)),
+                ..default()
+            },
             Transform {
                 translation: Vec3::new(wx, wy, z),
                 rotation: Quat::from_rotation_z(rot + extra),
@@ -1024,9 +1140,9 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
     // Torso.
     place(commands, dark, 16.0 * s, 14.0 * s, 0.0, 0.0, 0.0, zc + 0.1);
     if headshot {
-        // Burst skull: a broken shell + bone chips, brains trailing out the far side.
-        place(commands, skin, 9.0 * s, 8.0 * s, 11.0 * s, 0.0, 0.0, zc + 0.2);
-        place(commands, Color::srgb(0.35, 0.05, 0.06), 7.0 * s, 6.0 * s, 12.0 * s, 0.0, 0.0, zc + 0.22);
+        // Burst skull: a broken rounded shell + bone chips, brains trailing out.
+        round(commands, skin, 10.0 * s, 9.0 * s, 11.0 * s, 0.0, 0.0, zc + 0.2);
+        round(commands, Color::srgb(0.35, 0.05, 0.06), 7.5 * s, 6.5 * s, 12.5 * s, 0.0, 0.0, zc + 0.22);
         place(commands, bone, 3.0 * s, 2.0 * s, 13.0 * s, 3.0 * s, 0.6, zc + 0.24);
         place(commands, bone, 3.0 * s, 2.0 * s, 13.0 * s, -3.0 * s, -0.6, zc + 0.24);
         // Brain/gore trail streaking forward.
@@ -1046,8 +1162,13 @@ fn spawn_kill_corpse(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, 
             ));
         }
     } else {
-        // Intact-ish head, lolling to one side.
-        place(commands, skin, 11.0 * s, 11.0 * s, 11.0 * s, rng.gen_range(-4.0..4.0), 0.0, zc + 0.2);
+        // Intact-ish rounded head, lolling to one side, with a hair patch behind
+        // it for the styles that have hair.
+        let oy: f32 = rng.gen_range(-4.0..4.0);
+        if look.hair >= 0 {
+            round(commands, look.hair_col, 13.0 * s, 12.0 * s, 10.0 * s, oy, 0.0, zc + 0.19);
+        }
+        round(commands, skin, 13.0 * s, 12.0 * s, 11.5 * s, oy, 0.0, zc + 0.2);
     }
     // Guts spilling out of the torso: a connected rope of intestine plus loose
     // organ chunks, streaking off to one side as if they slid out when it fell.
@@ -1176,6 +1297,7 @@ pub fn zombie_death_system(
                 resolved,
                 z.angle + z.death_spin,
                 &z.look,
+                z.r / 12.0,
                 z.headshot,
                 &mut rng,
             );

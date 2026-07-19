@@ -528,6 +528,19 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
         group(commands, vec![frame, pistol_mag, pistol_slide, barrel])
     };
 
+    // .357 Magnum: a beefy revolver — a long steel barrel, a fat rounded cylinder
+    // ahead of the frame, and a wood grip.
+    let magnum_g = {
+        let frame = part(commands, gun_dark, 8.0, 5.0, 3.0, -0.5);
+        let barrel = part(commands, steel, 13.0, 3.4, 13.5, 0.0);
+        let cyl = commands.spawn(ellipse(art, gun, 7.0, 6.6, 0.16)).id();
+        commands
+            .entity(cyl)
+            .insert(Transform::from_xyz(4.5, 0.0, 0.16));
+        let grip = part(commands, wood, 4.5, 6.5, -0.5, -5.0);
+        group(commands, vec![grip, frame, cyl, barrel])
+    };
+
     // SMG (machine gun): body, foregrip mag, short barrel, stubby stock.
     let smg_g = {
         let body = part(commands, gun, 14.0, 5.0, 6.0, 0.0);
@@ -610,7 +623,7 @@ fn build_player_rig(commands: &mut Commands, art: &Art, root: Entity) {
     };
 
     let weapon_roots = [
-        melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g, sxs_g,
+        melee_g, pistol_g, smg_g, shotgun_g, rifle_g, launcher_g, sxs_g, magnum_g,
     ];
     commands.entity(weapon).add_children(&weapon_roots);
     // The bat shares the melee slot but swaps in its own model.

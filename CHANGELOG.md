@@ -4,6 +4,26 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.20.0]
+
+### Added
+- **.357 Magnum revolver** — a hard-hitting six-shooter with a long steel barrel
+  and a fat cylinder; heavy rounds ricochet and punch through a target. Selectable
+  with the `9` key or the scroll wheel.
+- **Grenades** — press `G` (or `F`) to lob a grenade; it flies out, rolls to a
+  stop and detonates on a short fuse with a big blast. You start with a handful,
+  the count shows on the HUD, and green **grenade crates** drop around the map to
+  restock.
+
+### Changed
+- **Corpses match living size** — a corpse is now built at the same scale as the
+  zombie that fell (big brutes stay big), and their **heads are properly rounded**
+  instead of a single flat square.
+- **Side-by-side dumps both barrels** — one trigger pull now fires **both shells at
+  once** (double the buckshot) and then the gun runs dry to reload. It no longer
+  flicks a casing out the side on firing; the two spent shells eject **when the
+  breech is cracked open** to reload.
+
 ## [0.19.0]
 
 ### Added

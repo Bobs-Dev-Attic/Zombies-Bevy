@@ -99,6 +99,7 @@ fn main() {
                 (
                     combat::projectile_system,
                     combat::zombie_disfigure.after(combat::projectile_system),
+                    combat::grenade_system,
                 ),
                 combat::explosion_system,
                 combat::particle_system,
