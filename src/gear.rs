@@ -11,6 +11,7 @@ pub enum PickupKind {
     Helmet,
     Armor,
     Medkit,
+    Grenades,
 }
 
 #[derive(Component)]
@@ -85,6 +86,7 @@ pub fn spawn_pickup_dura(
         PickupKind::Helmet => Color::srgba(0.5, 0.7, 0.4, 0.35),
         PickupKind::Armor => Color::srgba(0.5, 0.6, 0.8, 0.35),
         PickupKind::Medkit => Color::srgba(0.9, 0.3, 0.3, 0.35),
+        PickupKind::Grenades => Color::srgba(0.45, 0.6, 0.35, 0.35),
     };
     let glow = commands
         .spawn((
@@ -133,6 +135,17 @@ pub fn spawn_pickup_dura(
             let ch = commands.spawn(rect(Color::srgb(0.82, 0.12, 0.12), 12.0, 5.0, 0.21)).id();
             parts.extend([box_, cv, ch]);
         }
+        PickupKind::Grenades => {
+            // An open olive ammo crate with a couple of grenades poking out.
+            let crate_ = commands.spawn(rect(Color::srgb(0.22, 0.26, 0.16), 18.0, 14.0, 0.2)).id();
+            let lip = commands.spawn(rect(Color::srgb(0.14, 0.17, 0.11), 18.0, 4.0, 0.205)).id();
+            commands.entity(lip).insert(Transform::from_xyz(0.0, 6.0, 0.205));
+            let g1 = commands.spawn(disc(art, Color::srgb(0.16, 0.24, 0.14), 7.0, 0.22)).id();
+            commands.entity(g1).insert(Transform::from_xyz(-4.0, 2.0, 0.22));
+            let g2 = commands.spawn(disc(art, Color::srgb(0.16, 0.24, 0.14), 7.0, 0.22)).id();
+            commands.entity(g2).insert(Transform::from_xyz(4.0, 3.0, 0.22));
+            parts.extend([crate_, lip, g1, g2]);
+        }
     }
     commands.entity(icon).add_children(&parts);
     commands.entity(root).add_child(icon);
@@ -169,6 +182,7 @@ pub fn scatter_pickups(commands: &mut Commands, art: &Art, world: &World, center
         PickupKind::Helmet,
         PickupKind::Armor,
         PickupKind::Medkit,
+        PickupKind::Grenades,
     ];
     for k in kinds {
         if let Some(p) = floor_point_away(world, center, &mut rng) {
@@ -196,9 +210,14 @@ pub fn pickup_spawn_over_time(
     }
     let Ok(ptf) = player_q.single() else { return };
     let mut rng = rand::thread_rng();
-    let kind = *[PickupKind::Helmet, PickupKind::Armor, PickupKind::Medkit]
-        .get(rng.gen_range(0..3))
-        .unwrap();
+    let kind = *[
+        PickupKind::Helmet,
+        PickupKind::Armor,
+        PickupKind::Medkit,
+        PickupKind::Grenades,
+    ]
+    .get(rng.gen_range(0..4))
+    .unwrap();
     if let Some(p) = floor_point_away(&world, ptf.translation.truncate(), &mut rng) {
         spawn_pickup(&mut commands, &art, p, kind, &mut rng);
     }
@@ -263,6 +282,12 @@ pub fn pickup_collect(
                     continue; // leave it for when we're hurt
                 }
                 p.heal_by(40.0);
+            }
+            PickupKind::Grenades => {
+                if p.grenades >= 8 {
+                    continue; // already carrying a full set
+                }
+                p.grenades = (p.grenades + 3).min(8);
             }
         }
         commands.entity(e).despawn();

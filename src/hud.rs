@@ -844,13 +844,14 @@ pub fn update_hud(
     }
     if let Ok(mut t) = ammo_q.single_mut() {
         let w = p.weapon();
+        let nades = format!("\nGrenades  {}  [G]", p.grenades);
         if w.kind == WeaponKind::Melee {
-            **t = format!("{}", w.name);
+            **t = format!("{}{}", w.name, nades);
         } else {
             let reserve = p.ammo_for(w.ammo);
             let clip = p.clip[p.current];
             let extra = if p.reloading > 0.0 { "  (reloading…)" } else { "" };
-            **t = format!("{}  {} / {}{}", w.name, clip, reserve.min(999), extra);
+            **t = format!("{}  {} / {}{}{}", w.name, clip, reserve.min(999), extra, nades);
         }
     }
     if let Ok(mut t) = wave_q.single_mut() {

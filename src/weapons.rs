@@ -7,6 +7,7 @@ pub enum WeaponKind {
     Rifle,
     Launcher,
     Sxs, // side-by-side (break-action) shotgun
+    Magnum, // .357 revolver
 }
 
 impl WeaponKind {
@@ -20,12 +21,13 @@ impl WeaponKind {
             WeaponKind::Rifle => 4,
             WeaponKind::Launcher => 5,
             WeaponKind::Sxs => 6,
+            WeaponKind::Magnum => 7,
         }
     }
 }
 
 /// Number of distinct weapon-kind visual slots.
-pub const WEAPON_KINDS: usize = 7;
+pub const WEAPON_KINDS: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Ammo {
@@ -239,6 +241,29 @@ pub const WEAPONS: &[Weapon] = &[
         pierce: 0,
         wall_pierce: 0,
         falloff: 0.7,
+    },
+    Weapon {
+        name: ".357 Magnum",
+        kind: WeaponKind::Magnum,
+        damage: 58.0,
+        rate: 2.6,
+        auto: false,
+        clip: 6,
+        reload: 1.6,
+        pellets: 1,
+        spread: 0.015,
+        range: 560.0,
+        speed: 1000.0,
+        knockback: 150.0,
+        sever: 0.14,
+        explosive: 0.0,
+        ammo: Ammo::Rounds,
+        reach: 0.0,
+        // A heavy round: ricochets once and punches through a target.
+        ricochet: 1,
+        pierce: 1,
+        wall_pierce: 0,
+        falloff: 0.75,
     },
 ];
 

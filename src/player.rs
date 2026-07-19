@@ -35,6 +35,8 @@ pub struct Player {
     pub rounds: i32,
     pub shells: i32,
     pub rockets: i32,
+    pub grenades: i32,
+    pub throw_cd: f32, // brief cooldown between grenade throws
 
     pub cooldown: f32,
     pub reloading: f32,
@@ -89,6 +91,8 @@ impl Default for Player {
             rounds: 96,
             shells: 24,
             rockets: 3,
+            grenades: 4,
+            throw_cd: 0.0,
             cooldown: 0.0,
             reloading: 0.0,
             reload_total: 0.0,
@@ -286,6 +290,7 @@ pub fn player_update(
     p.muzzle = (p.muzzle - dt).max(0.0);
     p.invuln = (p.invuln - dt).max(0.0);
     p.recoil = (p.recoil - dt * 7.0).max(0.0);
+    p.throw_cd = (p.throw_cd - dt).max(0.0);
     p.swing_t = (p.swing_t - dt).max(0.0);
     p.armor_flash = (p.armor_flash - dt).max(0.0);
 
