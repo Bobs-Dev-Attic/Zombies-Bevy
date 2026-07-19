@@ -25,21 +25,55 @@ pub enum PropKind {
     Sofa,
 }
 
-/// Radius of the collider and whether it blocks movement/shots.
+/// Radius of the collider and whether it blocks movement/shots. Sized close to
+/// real-world proportions relative to the ~1.7m-tall player.
 pub fn prop_spec(kind: PropKind) -> (f32, bool) {
     match kind {
-        PropKind::Tree => (11.0, true),
-        PropKind::Bush => (15.0, false),
-        PropKind::Car => (23.0, true),
-        PropKind::Van => (27.0, true),
-        PropKind::Bench => (14.0, true),
-        PropKind::Dumpster => (18.0, true),
-        PropKind::Barrel => (9.0, true),
-        PropKind::Crate => (11.0, true),
-        PropKind::Hydrant => (6.0, true),
-        PropKind::Table => (12.0, true),
-        PropKind::Sofa => (16.0, true),
+        PropKind::Tree => (14.0, true),
+        PropKind::Bush => (17.0, false),
+        PropKind::Car => (30.0, true),
+        PropKind::Van => (35.0, true),
+        PropKind::Bench => (17.0, true),
+        PropKind::Dumpster => (21.0, true),
+        PropKind::Barrel => (10.0, true),
+        PropKind::Crate => (13.0, true),
+        PropKind::Hydrant => (7.0, true),
+        PropKind::Table => (15.0, true),
+        PropKind::Sofa => (19.0, true),
     }
+}
+
+/// Destructibility of a prop: (hit points, flammable, explodes when destroyed).
+pub fn prop_stats(kind: PropKind) -> (f32, bool, bool) {
+    match kind {
+        PropKind::Tree => (75.0, true, false),
+        PropKind::Bush => (18.0, true, false),
+        PropKind::Car => (130.0, true, true),
+        PropKind::Van => (150.0, true, true),
+        PropKind::Bench => (45.0, true, false),
+        PropKind::Dumpster => (110.0, true, false),
+        PropKind::Barrel => (28.0, true, true),
+        PropKind::Crate => (34.0, true, false),
+        PropKind::Hydrant => (400.0, false, false),
+        PropKind::Table => (32.0, true, false),
+        PropKind::Sofa => (42.0, true, false),
+    }
+}
+
+/// A prop that can be shot, burned, flipped and wrecked. Lives on the prop root
+/// entity alongside its visuals; the static collider in `World.props` is left in
+/// place as wreckage.
+#[derive(Component)]
+pub struct PropObj {
+    pub kind: PropKind,
+    pub hp: f32,
+    pub max_hp: f32,
+    pub r: f32,
+    pub flammable: bool,
+    pub explodes: bool,
+    pub burning: f32,
+    pub burn_fx: f32,
+    pub wrecked: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -439,12 +473,24 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
             Transform::from_xyz(pos.x + 5.0, pos.y - prop.r * 0.5, Z_DECAL + 4.0),
             WorldTile,
         ));
+        let (hp, flammable, explodes) = prop_stats(prop.kind);
         let root = commands
             .spawn((
                 Transform::from_xyz(pos.x, pos.y, z)
                     .with_rotation(Quat::from_rotation_z(prop.angle)),
                 Visibility::default(),
                 WorldTile,
+                PropObj {
+                    kind: prop.kind,
+                    hp,
+                    max_hp: hp,
+                    r: prop.r,
+                    flammable,
+                    explodes,
+                    burning: 0.0,
+                    burn_fx: 0.0,
+                    wrecked: false,
+                },
             ))
             .id();
         let mut parts: Vec<Entity> = Vec::new();
@@ -452,19 +498,19 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
             PropKind::Tree => {
                 // Trunk + layered canopy blobs.
                 let trunk = Color::srgb(0.28, 0.19, 0.11);
-                parts.push(pr_rect(commands, trunk, 8.0, 8.0, 0.0, 0.0, 0.1));
+                parts.push(pr_rect(commands, trunk, 10.0, 10.0, 0.0, 0.0, 0.1));
                 let g1 = Color::srgb(0.12, 0.28, 0.13);
                 let g2 = Color::srgb(0.16, 0.35, 0.17);
-                parts.push(pr_round(commands, art, g1, 40.0, 40.0, 0.0, 0.0, 0.3));
-                for _ in 0..4 {
+                parts.push(pr_round(commands, art, g1, 56.0, 56.0, 0.0, 0.0, 0.3));
+                for _ in 0..5 {
                     let a = rng.gen_range(0.0..std::f32::consts::TAU);
-                    let d = rng.gen_range(6.0..12.0);
+                    let d = rng.gen_range(8.0..16.0);
                     parts.push(pr_round(
                         commands,
                         art,
                         if rng.gen_bool(0.5) { g1 } else { g2 },
-                        rng.gen_range(16.0..24.0),
-                        rng.gen_range(16.0..24.0),
+                        rng.gen_range(22.0..32.0),
+                        rng.gen_range(22.0..32.0),
                         a.cos() * d,
                         a.sin() * d,
                         0.35 + rng.gen_range(0.0..0.1),
@@ -491,8 +537,8 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
             }
             PropKind::Car | PropKind::Van => {
                 let van = prop.kind == PropKind::Van;
-                let len = if van { 56.0 } else { 46.0 };
-                let wid = if van { 24.0 } else { 22.0 };
+                let len = if van { 78.0 } else { 64.0 };
+                let wid = if van { 32.0 } else { 28.0 };
                 let bodies = [
                     Color::srgb(0.5, 0.15, 0.14),
                     Color::srgb(0.15, 0.28, 0.45),
@@ -510,7 +556,7 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
                 let wx = len * 0.3;
                 let wy = wid * 0.5 + 1.0;
                 for (sx, sy) in [(wx, wy), (wx, -wy), (-wx, wy), (-wx, -wy)] {
-                    parts.push(pr_rect(commands, blk, 7.0, 4.0, sx, sy, 0.1));
+                    parts.push(pr_rect(commands, blk, 9.0, 5.0, sx, sy, 0.1));
                 }
                 // Body.
                 parts.push(pr_soft(commands, art, body, len, wid, 0.0, 0.0, 0.3));
@@ -531,31 +577,31 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
             PropKind::Bench => {
                 let wood = Color::srgb(0.35, 0.22, 0.12);
                 let metal = Color::srgb(0.12, 0.12, 0.14);
-                parts.push(pr_rect(commands, metal, 30.0, 12.0, 0.0, 0.0, 0.2));
+                parts.push(pr_rect(commands, metal, 38.0, 15.0, 0.0, 0.0, 0.2));
                 for i in 0..3 {
-                    parts.push(pr_rect(commands, wood, 28.0, 2.6, 0.0, -4.0 + i as f32 * 4.0, 0.3));
+                    parts.push(pr_rect(commands, wood, 36.0, 3.2, 0.0, -5.0 + i as f32 * 5.0, 0.3));
                 }
             }
             PropKind::Dumpster => {
                 let body = Color::srgb(0.15, 0.32, 0.2);
                 let lid = Color::srgb(0.1, 0.22, 0.14);
-                parts.push(pr_rect(commands, body, 30.0, 22.0, 0.0, 0.0, 0.2));
-                parts.push(pr_rect(commands, lid, 32.0, 8.0, 0.0, 7.0, 0.3));
-                parts.push(pr_rect(commands, Color::srgb(0.08, 0.16, 0.1), 30.0, 2.0, 0.0, -2.0, 0.31));
+                parts.push(pr_rect(commands, body, 38.0, 28.0, 0.0, 0.0, 0.2));
+                parts.push(pr_rect(commands, lid, 40.0, 10.0, 0.0, 9.0, 0.3));
+                parts.push(pr_rect(commands, Color::srgb(0.08, 0.16, 0.1), 38.0, 2.5, 0.0, -3.0, 0.31));
             }
             PropKind::Barrel => {
                 let rust = Color::srgb(0.4, 0.3, 0.16);
-                parts.push(pr_round(commands, art, rust, 18.0, 18.0, 0.0, 0.0, 0.2));
-                parts.push(pr_round(commands, art, Color::srgb(0.5, 0.4, 0.22), 12.0, 12.0, 0.0, 0.0, 0.25));
-                parts.push(pr_rect(commands, Color::srgb(0.2, 0.15, 0.08), 18.0, 2.0, 0.0, 3.0, 0.26));
+                parts.push(pr_round(commands, art, rust, 20.0, 20.0, 0.0, 0.0, 0.2));
+                parts.push(pr_round(commands, art, Color::srgb(0.5, 0.4, 0.22), 13.0, 13.0, 0.0, 0.0, 0.25));
+                parts.push(pr_rect(commands, Color::srgb(0.2, 0.15, 0.08), 20.0, 2.4, 0.0, 3.5, 0.26));
             }
             PropKind::Crate => {
                 let wood = Color::srgb(0.42, 0.3, 0.16);
                 let edge = Color::srgb(0.3, 0.21, 0.11);
-                parts.push(pr_rect(commands, wood, 22.0, 22.0, 0.0, 0.0, 0.2));
-                parts.push(pr_rect(commands, edge, 22.0, 3.0, 0.0, 8.0, 0.25));
-                parts.push(pr_rect(commands, edge, 22.0, 3.0, 0.0, -8.0, 0.25));
-                parts.push(pr_rect(commands, edge, 3.0, 22.0, 0.0, 0.0, 0.25));
+                parts.push(pr_rect(commands, wood, 26.0, 26.0, 0.0, 0.0, 0.2));
+                parts.push(pr_rect(commands, edge, 26.0, 3.4, 0.0, 9.5, 0.25));
+                parts.push(pr_rect(commands, edge, 26.0, 3.4, 0.0, -9.5, 0.25));
+                parts.push(pr_rect(commands, edge, 3.4, 26.0, 0.0, 0.0, 0.25));
             }
             PropKind::Hydrant => {
                 let red = Color::srgb(0.7, 0.12, 0.1);
@@ -565,23 +611,113 @@ pub fn spawn_props(commands: &mut Commands, world: &World, art: &crate::art::Art
             }
             PropKind::Table => {
                 let wood = Color::srgb(0.36, 0.24, 0.14);
-                parts.push(pr_round(commands, art, Color::srgb(0.2, 0.14, 0.08), 26.0, 26.0, 0.0, 0.0, 0.2));
-                parts.push(pr_round(commands, art, wood, 22.0, 22.0, 0.0, 0.0, 0.25));
+                parts.push(pr_round(commands, art, Color::srgb(0.2, 0.14, 0.08), 32.0, 32.0, 0.0, 0.0, 0.2));
+                parts.push(pr_round(commands, art, wood, 27.0, 27.0, 0.0, 0.0, 0.25));
             }
             PropKind::Sofa => {
                 let fab = Color::srgb(0.3, 0.26, 0.35);
                 let fab2 = Color::srgb(0.36, 0.31, 0.42);
-                parts.push(pr_soft(commands, art, fab, 30.0, 22.0, 0.0, 0.0, 0.2));
+                parts.push(pr_soft(commands, art, fab, 38.0, 27.0, 0.0, 0.0, 0.2));
                 // Back + arms.
-                parts.push(pr_rect(commands, fab2, 30.0, 6.0, 0.0, -8.0, 0.26));
-                parts.push(pr_rect(commands, fab2, 6.0, 22.0, -12.0, 0.0, 0.26));
-                parts.push(pr_rect(commands, fab2, 6.0, 22.0, 12.0, 0.0, 0.26));
+                parts.push(pr_rect(commands, fab2, 38.0, 7.0, 0.0, -10.0, 0.26));
+                parts.push(pr_rect(commands, fab2, 7.0, 27.0, -15.0, 0.0, 0.26));
+                parts.push(pr_rect(commands, fab2, 7.0, 27.0, 15.0, 0.0, 0.26));
                 // Cushions.
-                parts.push(pr_soft(commands, art, fab2, 11.0, 12.0, -6.0, 2.0, 0.28));
-                parts.push(pr_soft(commands, art, fab2, 11.0, 12.0, 6.0, 2.0, 0.28));
+                parts.push(pr_soft(commands, art, fab2, 14.0, 15.0, -7.5, 2.0, 0.28));
+                parts.push(pr_soft(commands, art, fab2, 14.0, 15.0, 7.5, 2.0, 0.28));
             }
         }
         commands.entity(root).add_children(&parts);
+    }
+}
+
+/// Drive damaged props: burning ones throw flame + smoke and burn down; when a
+/// prop's hp hits zero it's wrecked — tipped over, charred, left smoldering — and
+/// explosive props (cars, barrels) detonate.
+pub fn prop_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut explosions: EventWriter<crate::combat::Explosion>,
+    mut q: Query<(Entity, &mut PropObj, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    let mut rng = rand::thread_rng();
+    for (e, mut p, mut tf) in q.iter_mut() {
+        if p.burning > 0.0 {
+            p.burning -= dt;
+            if !p.wrecked {
+                p.hp -= 9.0 * dt;
+            }
+            p.burn_fx -= dt;
+            if p.burn_fx <= 0.0 {
+                p.burn_fx = rng.gen_range(0.05..0.12);
+                let pos = tf.translation.truncate();
+                let spread = p.r * 0.7;
+                let off = Vec2::new(rng.gen_range(-spread..spread), rng.gen_range(-spread..spread));
+                let hot = if rng.gen_bool(0.5) {
+                    Color::srgb(1.0, 0.6, 0.15)
+                } else {
+                    Color::srgb(1.0, 0.85, 0.3)
+                };
+                commands.spawn((
+                    Sprite::from_color(hot, Vec2::splat(rng.gen_range(4.0..8.0))),
+                    Transform::from_xyz(pos.x + off.x, pos.y + off.y, Z_FX - 2.0),
+                    crate::combat::Particle {
+                        vel: Vec2::new(rng.gen_range(-12.0..12.0), 34.0 + rng.gen_range(0.0..46.0)),
+                        life: rng.gen_range(0.3..0.6),
+                        max_life: 0.6,
+                        drag: 0.9,
+                        gravity: 0.0,
+                        base: hot,
+                    },
+                ));
+                if rng.gen_bool(0.5) {
+                    let g = rng.gen_range(0.1..0.2);
+                    let smoke = Color::srgba(g, g, g, 0.6);
+                    commands.spawn((
+                        Sprite::from_color(smoke, Vec2::splat(rng.gen_range(6.0..12.0))),
+                        Transform::from_xyz(pos.x + off.x, pos.y + off.y, Z_FX - 1.0),
+                        crate::combat::Particle {
+                            vel: Vec2::new(rng.gen_range(-10.0..10.0), 40.0 + rng.gen_range(0.0..40.0)),
+                            life: rng.gen_range(0.6..1.3),
+                            max_life: 1.3,
+                            drag: 0.93,
+                            gravity: 0.0,
+                            base: smoke,
+                        },
+                    ));
+                }
+            }
+        }
+        if p.hp <= 0.0 && !p.wrecked {
+            p.wrecked = true;
+            let pos = tf.translation.truncate();
+            let sign = if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
+            // Tipped/flipped over.
+            tf.rotation *= Quat::from_rotation_z(sign * rng.gen_range(0.5..1.2));
+            // Charred overlay across the whole prop.
+            let over = commands
+                .spawn((
+                    Sprite {
+                        color: Color::srgba(0.05, 0.04, 0.04, 0.72),
+                        custom_size: Some(Vec2::splat(p.r * 2.3)),
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 0.0, 0.5),
+                ))
+                .id();
+            commands.entity(e).add_child(over);
+            p.burning = p.burning.max(2.5); // smolder a while longer
+            if p.explodes {
+                explosions.write(crate::combat::Explosion {
+                    pos,
+                    radius: 72.0,
+                    damage: 85.0,
+                    knockback: 250.0,
+                    sever: 0.4,
+                });
+            }
+        }
     }
 }
 

@@ -4,6 +4,20 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.27.0]
+
+### Added
+- **Destructible, flammable props** — the scenery is now interactive. Props take
+  damage from bullets, blasts and flames; flammable ones **catch fire**, throwing
+  flame and **smoke**, and burn down. When wrecked they **tip/flip over** and char
+  to blackened wreckage. **Cars, vans and fuel barrels explode** when destroyed —
+  and the blast can chain-react through a whole row of parked cars. Explosions
+  also set nearby zombies alight.
+
+### Changed
+- **Larger, realistic props** — trees, cars, vans, benches, dumpsters, tables,
+  sofas, crates and barrels are all scaled up to more true-to-life proportions.
+
 ## [0.26.0]
 
 ### Added
