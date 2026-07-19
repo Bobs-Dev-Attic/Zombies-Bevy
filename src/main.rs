@@ -104,7 +104,7 @@ fn main() {
                     combat::zombie_disfigure.after(combat::projectile_system),
                     combat::grenade_system,
                 ),
-                combat::explosion_system,
+                (combat::explosion_system, world::prop_system),
                 combat::particle_system,
                 (combat::decal_system, combat::player_footprints),
                 combat::zombie_death_system,

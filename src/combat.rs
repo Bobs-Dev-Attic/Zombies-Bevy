@@ -486,6 +486,7 @@ pub fn firing_system(
     mut commands: Commands,
     mut q: Query<(&mut Player, &Transform)>,
     mut zombies: Query<(&mut Zombie, &Transform)>,
+    mut props: Query<(&mut crate::world::PropObj, &Transform), (Without<Player>, Without<Zombie>)>,
 ) {
     let _ = time;
     let Ok((mut p, tf)) = q.single_mut() else {
@@ -622,6 +623,22 @@ pub fn firing_system(
                     z.hurt_flash = 0.05;
                     z.burning = z.burning.max(3.0);
                     z.apply_knockback(angle, w.knockback);
+                }
+            }
+        }
+        // Set flammable props in the cone alight too.
+        for (mut pr, ptf) in props.iter_mut() {
+            if pr.wrecked || !pr.flammable {
+                continue;
+            }
+            let d = ptf.translation.truncate() - pos;
+            let dist = d.length();
+            if dist < w.range + pr.r {
+                let ad = (d.y.atan2(d.x) - angle).rem_euclid(TAU);
+                let ad = if ad > std::f32::consts::PI { ad - TAU } else { ad };
+                if ad.abs() < 0.45 {
+                    pr.burning = pr.burning.max(3.0);
+                    pr.hp -= w.damage * 0.5;
                 }
             }
         }
@@ -855,6 +872,7 @@ pub fn projectile_system(
     mut player_q: Query<(&mut Player, &Transform), (Without<Projectile>, Without<Zombie>)>,
     crows: Query<(Entity, &Transform), (With<crate::ambient::Crow>, Without<Projectile>, Without<Zombie>, Without<Player>)>,
     cats: Query<(Entity, &Transform, &crate::ambient::Cat), (Without<Projectile>, Without<Zombie>, Without<Player>)>,
+    mut props: Query<(&mut crate::world::PropObj, &Transform), Without<Projectile>>,
 ) {
     let dt = time.delta_secs();
     let mut rng = rand::thread_rng();
@@ -875,6 +893,19 @@ pub fn projectile_system(
         let mut dead = proj.traveled >= proj.range;
 
         if world.blocks_point(next) {
+            // If a prop (not a solid wall tile) stopped the round, chip its hp.
+            let (tc, tr) = world.world_to_tile(next);
+            if !world.solid(tc, tr) {
+                for (mut pr, ptf) in props.iter_mut() {
+                    if pr.wrecked {
+                        continue;
+                    }
+                    if (ptf.translation.truncate() - next).length() < pr.r + 3.0 {
+                        pr.hp -= proj.damage;
+                        break;
+                    }
+                }
+            }
             if proj.explosive > 0.0 {
                 explosions.write(Explosion {
                     pos: next,
@@ -1067,6 +1098,7 @@ pub fn explosion_system(
     mut commands: Commands,
     mut zombies: Query<(&mut Zombie, &Transform)>,
     mut player_q: Query<(&mut Player, &Transform), Without<Zombie>>,
+    mut props: Query<(&mut crate::world::PropObj, &Transform), (Without<Zombie>, Without<Player>)>,
 ) {
     for ex in ev.read() {
         shake.add(0.7);
@@ -1111,6 +1143,24 @@ pub fn explosion_system(
                 let a = d.y.atan2(d.x);
                 z.apply_knockback(a, ex.knockback * falloff);
                 blood_burst(&mut commands, zp, a, 6);
+                if z.hp > 0.0 && rng.gen_bool(0.4) {
+                    z.burning = z.burning.max(2.5); // caught in the fireball
+                }
+            }
+        }
+
+        // Blasts damage and ignite nearby props (chain-reacting cars/barrels).
+        for (mut pr, ptf) in props.iter_mut() {
+            if pr.wrecked {
+                continue;
+            }
+            let d = (ptf.translation.truncate() - ex.pos).length();
+            if d < ex.radius + pr.r {
+                let falloff = (1.0 - d / (ex.radius + pr.r)).clamp(0.0, 1.0);
+                pr.hp -= ex.damage * (0.5 + 0.5 * falloff);
+                if pr.flammable {
+                    pr.burning = pr.burning.max(3.0);
+                }
             }
         }
 
