@@ -4,6 +4,21 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.18.0]
+
+### Added
+- **Zoom** — pinch with two fingers on touch, or press `-` / `=` on desktop, to
+  zoom the camera in and out (great for seeing detail on mobile). Two-finger
+  pinch no longer nudges the movement stick or fires.
+
+### Changed
+- **Bloodier gore on the ground** — blood no longer lands as a single flat
+  square. Each hit now leaves an irregular pooling stain plus a directional
+  cast-off spray of finer droplets, with varied size, shade and decay time.
+- **Grislier corpses** — bodies bleed into ragged, uneven pools; guts spill out
+  as a coiled rope of intestine with loose organ chunks and a dark clotted blood
+  streak pouring from the wound; more ribs show through the torn torso.
+
 ## [0.17.0]
 
 ### Added

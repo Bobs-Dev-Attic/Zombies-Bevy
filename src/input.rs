@@ -101,9 +101,16 @@ pub fn gather_input(
     }
 
     // ---- On-screen touch controls ----
+    // Two or more fingers means a pinch-zoom gesture — hand it to the camera and
+    // don't let it drive the joystick or fire button this frame.
+    let pinching = touches.iter().count() >= 2;
     // A quick tap can begin+end within a frame, so also count just-pressed.
     let mut any_touch = touches.iter_just_pressed().next().is_some();
     for t in touches.iter() {
+        if pinching {
+            any_touch = true;
+            break;
+        }
         let p = t.position(); // screen px, origin top-left, y down
         any_touch = true;
         if p.distance(attack_center) < BTN_R + 24.0 {

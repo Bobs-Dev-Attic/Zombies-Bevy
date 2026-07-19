@@ -103,6 +103,18 @@ impl Settings {
     }
 }
 
+/// Camera zoom level (1.0 = default). Higher = zoomed in. Driven by pinch on
+/// touch and the -/= keys on desktop.
+#[derive(Resource)]
+pub struct Zoom {
+    pub level: f32,
+}
+impl Default for Zoom {
+    fn default() -> Self {
+        Self { level: 1.0 }
+    }
+}
+
 /// A running tally the HUD reads.
 #[derive(Resource, Default)]
 pub struct Score {
