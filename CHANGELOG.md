@@ -4,6 +4,20 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.24.0]
+
+### Added
+- **Zombie dogs** — a fast, low-slung **quadruped** enemy that sprints straight at
+  you on a four-legged bound (front and back legs out of phase, body stretching,
+  tail whipping). Low health but quick — they close distance fast. They bleed,
+  burn, lose limbs and ragdoll like any zombie, and leave a small dog carcass.
+- **Stray cats** — skittish critters that roam the streets, amble between spots,
+  and **bolt away** the moment you get close. Shootable, like the crows (fur puff
+  + a little carcass) — though there's no reason to.
+
+_Final slice of the batch (shells bounce, flamethrower + fire, props, scenes,
+dogs & cats all shipped)._
+
 ## [0.23.0]
 
 ### Added

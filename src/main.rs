@@ -142,6 +142,7 @@ fn main() {
                 ambient::fly_system,
                 ambient::twitch_system,
                 ambient::crow_system,
+                ambient::cat_system,
             )
                 .run_if(in_state(GameState::Playing)),
         )

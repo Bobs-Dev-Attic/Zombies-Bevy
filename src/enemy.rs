@@ -12,6 +12,7 @@ pub enum ZKind {
     Crawler,
     Brute,
     Spitter,
+    Dog,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -41,6 +42,8 @@ pub fn zdef(k: ZKind) -> ZDef {
         ZKind::Crawler => ZDef { hp: 22.0, speed: 74.0, r: 9.0, dmg: 6.0, score: 14, pattern: Pattern::WanderChase, knock_resist: 0.1, gore: 0.7, shamble: 0.42, lurch: 0.32 },
         ZKind::Brute => ZDef { hp: 180.0, speed: 40.0, r: 21.0, dmg: 22.0, score: 40, pattern: Pattern::Direct, knock_resist: 0.75, gore: 2.0, shamble: 0.26, lurch: 0.42 },
         ZKind::Spitter => ZDef { hp: 40.0, speed: 52.0, r: 12.0, dmg: 5.0, score: 24, pattern: Pattern::Ranged, knock_resist: 0.2, gore: 1.0, shamble: 0.2, lurch: 0.18 },
+        // Fast, low-slung quadruped: sprints straight at you, easy to drop.
+        ZKind::Dog => ZDef { hp: 22.0, speed: 132.0, r: 10.0, dmg: 8.0, score: 18, pattern: Pattern::Direct, knock_resist: 0.05, gore: 0.7, shamble: 0.12, lurch: 0.1 },
     }
 }
 
@@ -70,6 +73,31 @@ fn jitter(rng: &mut impl Rng, c: [f32; 3], amt: f32) -> Color {
 }
 
 pub fn make_look(kind: ZKind, rng: &mut impl Rng) -> Look {
+    // A zombie dog: mangy fur instead of skin/clothes. Reuses `skin` for the fur
+    // and `shirt` for the darker back/saddle; humanoid config fields stay off.
+    if kind == ZKind::Dog {
+        let furs = [[0.34, 0.27, 0.18], [0.22, 0.2, 0.19], [0.12, 0.11, 0.1], [0.45, 0.4, 0.3]];
+        let fur = furs[rng.gen_range(0..furs.len())];
+        let fur_c = jitter(rng, fur, 0.04);
+        let back = {
+            let s = fur_c.to_srgba();
+            Color::srgb(s.red * 0.7, s.green * 0.7, s.blue * 0.7)
+        };
+        return Look {
+            skin: fur_c,
+            shirt: back,
+            pants: fur_c,
+            hair: -1,
+            hair_col: fur_c,
+            size: rng.gen_range(0.9..1.1),
+            missing_arm: -1,
+            missing_leg: -1,
+            drag_leg: -1,
+            crawler: false,
+            gash: rng.gen_bool(0.3),
+            tatters: false,
+        };
+    }
     let skin_base = *[[0.42, 0.50, 0.36], [0.55, 0.58, 0.44], [0.36, 0.45, 0.40]]
         .get(rng.gen_range(0..3))
         .unwrap();
@@ -381,24 +409,28 @@ fn pick_kind(wave: u32, rng: &mut impl Rng) -> ZKind {
             }
         }
         2..=3 => {
-            if roll < 0.55 {
+            if roll < 0.5 {
                 ZKind::Walker
-            } else if roll < 0.78 {
+            } else if roll < 0.68 {
                 ZKind::Crawler
-            } else if roll < 0.94 {
+            } else if roll < 0.84 {
                 ZKind::Runner
+            } else if roll < 0.94 {
+                ZKind::Dog
             } else {
                 ZKind::Spitter
             }
         }
         _ => {
-            if roll < 0.4 {
+            if roll < 0.36 {
                 ZKind::Walker
-            } else if roll < 0.58 {
+            } else if roll < 0.52 {
                 ZKind::Runner
-            } else if roll < 0.72 {
+            } else if roll < 0.66 {
+                ZKind::Dog
+            } else if roll < 0.78 {
                 ZKind::Crawler
-            } else if roll < 0.86 {
+            } else if roll < 0.9 {
                 ZKind::Spitter
             } else {
                 ZKind::Brute

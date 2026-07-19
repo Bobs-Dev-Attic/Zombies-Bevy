@@ -33,6 +33,19 @@ pub struct Crow {
     pub fleeing: bool,
 }
 
+/// A stray cat that skitters around the streets and bolts when the player nears.
+/// Shootable, like the crows.
+#[derive(Component)]
+pub struct Cat {
+    pub home: Vec2,
+    pub vel: Vec2,
+    pub target: Vec2,
+    pub t: f32,
+    pub fleeing: bool,
+    pub tail: Entity,
+    pub fur: Color,
+}
+
 /// A corpse that twitches — periodic little jerks of the body.
 #[derive(Component)]
 pub struct Twitch {
@@ -140,6 +153,13 @@ pub fn scatter_ambient(commands: &mut Commands, art: &Art, world: &World, center
             for _ in 0..rng.gen_range(1..3) {
                 spawn_crow(commands, p, &mut rng);
             }
+        }
+    }
+
+    // ---- Stray cats roaming the streets ----
+    for _ in 0..rng.gen_range(3..6) {
+        if let Some(p) = floor_pt(world, center, &mut rng, 120.0) {
+            spawn_cat(commands, p, &mut rng);
         }
     }
 }
@@ -489,6 +509,158 @@ pub fn crow_system(
         }
         tf.translation.x += crow.vel.x * dt;
         tf.translation.y += crow.vel.y * dt;
+    }
+}
+
+fn spawn_cat(commands: &mut Commands, home: Vec2, rng: &mut impl Rng) {
+    let furs = [
+        Color::srgb(0.08, 0.08, 0.09),  // black
+        Color::srgb(0.35, 0.35, 0.38),  // grey
+        Color::srgb(0.6, 0.38, 0.16),   // ginger
+        Color::srgb(0.7, 0.68, 0.62),   // white/cream
+    ];
+    let fur = furs[rng.gen_range(0..furs.len())];
+    let dark = {
+        let s = fur.to_srgba();
+        Color::srgb(s.red * 0.65, s.green * 0.65, s.blue * 0.65)
+    };
+    let p = home + Vec2::new(rng.gen_range(-12.0..12.0), rng.gen_range(-12.0..12.0));
+    // Tail as a rear pivot so it can sway.
+    let tail = commands
+        .spawn((Transform::from_xyz(-6.0, 0.0, 0.02), Visibility::default()))
+        .id();
+    let tstrip = commands
+        .spawn((
+            Sprite::from_color(fur, Vec2::new(7.0, 2.2)),
+            Transform::from_xyz(-3.5, 0.0, 0.0),
+        ))
+        .id();
+    commands.entity(tail).add_child(tstrip);
+    let root = commands
+        .spawn((
+            Transform {
+                translation: Vec3::new(p.x, p.y, Z_PARTICLE + 3.0),
+                rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+                ..default()
+            },
+            Visibility::default(),
+            Cat {
+                home,
+                vel: Vec2::ZERO,
+                target: p,
+                t: rng.gen_range(0.5..1.8),
+                fleeing: false,
+                tail,
+                fur,
+            },
+            Cleanup,
+        ))
+        .id();
+    let body = commands.spawn(Sprite::from_color(fur, Vec2::new(12.0, 6.5))).id();
+    let head = commands
+        .spawn((
+            Sprite::from_color(fur, Vec2::new(6.0, 6.0)),
+            Transform::from_xyz(7.0, 0.0, 0.03),
+        ))
+        .id();
+    let ear1 = commands
+        .spawn((
+            Sprite::from_color(dark, Vec2::new(2.4, 3.0)),
+            Transform::from_xyz(8.0, 2.2, 0.02),
+        ))
+        .id();
+    let ear2 = commands
+        .spawn((
+            Sprite::from_color(dark, Vec2::new(2.4, 3.0)),
+            Transform::from_xyz(8.0, -2.2, 0.02),
+        ))
+        .id();
+    commands.entity(head).add_children(&[ear1, ear2]);
+    commands.entity(root).add_children(&[tail, body, head]);
+}
+
+/// Fur puff + a small dead-cat decal where a shot cat drops.
+pub fn kill_cat(commands: &mut Commands, pos: Vec2, fur: Color, rng: &mut impl Rng) {
+    for _ in 0..5 {
+        let a = rng.gen_range(0.0..TAU);
+        feather(commands, pos, Vec2::new(a.cos(), a.sin()) * rng.gen_range(30.0..90.0), rng);
+    }
+    // A little blood.
+    for _ in 0..rng.gen_range(3..6) {
+        let a = rng.gen_range(0.0..TAU);
+        let d = rng.gen_range(3.0..10.0);
+        let o = Vec2::new(a.cos(), a.sin()) * d;
+        commands.spawn(block(
+            Color::srgb(0.3, 0.02, 0.03),
+            rng.gen_range(2.0..4.0),
+            rng.gen_range(2.0..4.0),
+            pos.x + o.x,
+            pos.y + o.y,
+            Z_DECAL + 0.6,
+            rng.gen_range(0.0..TAU),
+        ));
+    }
+    // Splayed carcass.
+    let rot = rng.gen_range(0.0..TAU);
+    commands.spawn(block(fur, 12.0, 6.0, pos.x, pos.y, Z_DECAL + 0.7, rot));
+    commands.spawn(block(fur, 6.0, 5.0, pos.x + rot.cos() * 8.0, pos.y + rot.sin() * 8.0, Z_DECAL + 0.72, rot));
+}
+
+/// Cats wander and sit, and bolt away fast when the player gets close.
+pub fn cat_system(
+    time: Res<Time>,
+    world: Res<World>,
+    mut commands: Commands,
+    player_q: Query<&Transform, (With<Player>, Without<Cat>)>,
+    mut q: Query<(Entity, &mut Cat, &mut Transform)>,
+    mut tf_q: Query<&mut Transform, (Without<Cat>, Without<Player>)>,
+) {
+    let dt = time.delta_secs();
+    let ppos = player_q.single().ok().map(|tf| tf.translation.truncate());
+    let mut rng = rand::thread_rng();
+    for (e, mut cat, mut tf) in q.iter_mut() {
+        let pos = tf.translation.truncate();
+        if let Some(pp) = ppos {
+            if !cat.fleeing && (pos - pp).length() < 125.0 {
+                cat.fleeing = true;
+            }
+        }
+        if cat.fleeing {
+            // Bolt directly away, skittering fast, and vanish once well clear.
+            let away = ppos.map(|pp| pos - pp).unwrap_or(Vec2::new(1.0, 0.0));
+            cat.vel += away.normalize_or_zero() * 1400.0 * dt;
+            cat.vel = cat.vel.clamp_length_max(300.0);
+            if (pos - cat.home).length() > 640.0 {
+                commands.entity(e).despawn();
+                continue;
+            }
+        } else {
+            // Amble to a nearby spot, pausing (sitting) in between.
+            cat.t -= dt;
+            if cat.t <= 0.0 {
+                cat.t = rng.gen_range(0.8..2.6);
+                let a = rng.gen_range(0.0..TAU);
+                let r = rng.gen_range(10.0..40.0);
+                cat.target = cat.home + Vec2::new(a.cos(), a.sin()) * r;
+            }
+            let target = cat.target;
+            cat.vel += (target - pos) * 1.6 * dt;
+            cat.vel = cat.vel.clamp_length_max(70.0);
+            cat.vel *= 0.9_f32.powf(dt * 60.0);
+        }
+        // Tail sway (faster while fleeing).
+        let sway = if cat.fleeing { 16.0 } else { 4.0 };
+        if let Ok(mut t) = tf_q.get_mut(cat.tail) {
+            t.rotation = Quat::from_rotation_z((time.elapsed_secs() * sway).sin() * 0.5);
+        }
+        // Face travel, slide against walls.
+        if cat.vel.length_squared() > 1.0 {
+            tf.rotation = Quat::from_rotation_z(cat.vel.y.atan2(cat.vel.x));
+        }
+        let next = pos + cat.vel * dt;
+        let resolved = world.collide(next, 4.0);
+        tf.translation.x = resolved.x;
+        tf.translation.y = resolved.y;
     }
 }
 

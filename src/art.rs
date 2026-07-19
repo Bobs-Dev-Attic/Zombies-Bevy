@@ -719,6 +719,113 @@ fn build_zombie_rig(commands: &mut Commands, art: &Art, root: Entity, z: &Zombie
         Color::srgb(c.red * f, c.green * f, c.blue * f)
     };
 
+    // ---- Zombie dog: a low-slung quadruped. Reuses the shared Rig slots — the
+    // "arms" are the front legs, the "legs" are the back legs, the torso is the
+    // dog's body and the tail lives in the tatters slot — so death, disfigure,
+    // burning and gore all work unchanged. ----
+    if z.kind == crate::enemy::ZKind::Dog {
+        let fur = look.skin;
+        let back = look.shirt;
+        let paw = darker(fur, 0.55);
+        // Long, flat shadow.
+        let shadow = commands
+            .spawn((
+                Sprite {
+                    image: art.soft.clone(),
+                    color: Color::srgba(0.0, 0.0, 0.0, 0.34),
+                    custom_size: Some(Vec2::new(34.0 * s, 15.0 * s)),
+                    ..default()
+                },
+                Transform::from_xyz(-1.0 * s, -4.0 * s, -0.5),
+            ))
+            .id();
+        let body = commands.spawn((Transform::default(), Visibility::default())).id();
+        // A short two-segment dog leg extending +X; returns (pivot, lower_pivot).
+        let build_dleg = |commands: &mut Commands| -> (Entity, Entity) {
+            let pivot = commands.spawn((Transform::default(), Visibility::default())).id();
+            let l1 = 4.5 * s;
+            let l2 = 4.2 * s;
+            let w = 3.2 * s;
+            let upper = commands.spawn(rrect(art, fur, l1, w, 0.1)).id();
+            commands.entity(upper).insert(Transform::from_xyz(l1 * 0.5, 0.0, 0.1));
+            let lo = commands
+                .spawn((Transform::from_xyz(l1, 0.0, 0.0), Visibility::default()))
+                .id();
+            let lower = commands.spawn(rrect(art, fur, l2, w * 0.9, 0.1)).id();
+            commands.entity(lower).insert(Transform::from_xyz(l2 * 0.5, 0.0, 0.1));
+            let pw = commands.spawn(rect(paw, 3.2 * s, 3.4 * s, 0.11)).id();
+            commands.entity(pw).insert(Transform::from_xyz(l2 + 1.0 * s, 0.0, 0.11));
+            commands.entity(lo).add_children(&[lower, pw]);
+            commands.entity(pivot).add_children(&[upper, lo]);
+            (pivot, lo)
+        };
+        let (arm_l, fore_l) = build_dleg(commands); // front-left
+        let (arm_r, fore_r) = build_dleg(commands); // front-right
+        let (leg_l, shin_l) = build_dleg(commands); // back-left
+        let (leg_r, shin_r) = build_dleg(commands); // back-right
+        commands.entity(arm_l).insert(Transform::from_xyz(7.0 * s, 4.5 * s, 0.1));
+        commands.entity(arm_r).insert(Transform::from_xyz(7.0 * s, -4.5 * s, 0.1));
+        commands.entity(leg_l).insert(Transform::from_xyz(-8.0 * s, 4.5 * s, -0.1));
+        commands.entity(leg_r).insert(Transform::from_xyz(-8.0 * s, -4.5 * s, -0.1));
+        // Body (elongated along X) with a lighter belly.
+        let torso = commands.spawn(rrect(art, back, 22.0 * s, 11.0 * s, 0.0)).id();
+        let belly = commands.spawn(rrect(art, fur, 18.0 * s, 7.0 * s, -0.01)).id();
+        commands.entity(belly).insert(Transform::from_xyz(1.0 * s, 0.0, -0.01));
+        commands.entity(torso).add_child(belly);
+        if look.gash {
+            let wound = commands.spawn(rect(blood, 6.0 * s, 5.0 * s, 0.05)).id();
+            commands.entity(wound).insert(Transform::from_xyz(-2.0 * s, 2.0 * s, 0.05));
+            commands.entity(torso).add_child(wound);
+        }
+        // Head at the front: skull + snout + nose + ears, jaw slightly agape.
+        let head = commands.spawn(ellipse(art, fur, 11.0 * s, 10.0 * s, 0.25)).id();
+        let snout = commands.spawn(rect(fur, 7.0 * s, 5.0 * s, 0.24)).id();
+        commands.entity(snout).insert(Transform::from_xyz(7.0 * s, 0.0, 0.24));
+        let nose = commands.spawn(rect(darker(fur, 0.35), 3.0 * s, 3.2 * s, 0.26)).id();
+        commands.entity(nose).insert(Transform::from_xyz(10.5 * s, 0.0, 0.26));
+        let ear1 = commands.spawn(rect(darker(fur, 0.7), 3.2 * s, 4.0 * s, 0.24)).id();
+        commands.entity(ear1).insert(Transform::from_xyz(-2.0 * s, 4.0 * s, 0.24));
+        let ear2 = commands.spawn(rect(darker(fur, 0.7), 3.2 * s, 4.0 * s, 0.24)).id();
+        commands.entity(ear2).insert(Transform::from_xyz(-2.0 * s, -4.0 * s, 0.24));
+        commands.entity(head).add_children(&[snout, nose, ear1, ear2]);
+        commands.entity(head).insert(Transform::from_xyz(12.0 * s, 0.0, 0.25));
+        // Tail (reuses the tatters slot so it can wag): a pivot at the rear with a
+        // strip trailing back.
+        let tail = commands
+            .spawn((Transform::from_xyz(-11.0 * s, 0.0, 0.05), Visibility::default()))
+            .id();
+        let tstrip = commands.spawn(rrect(art, fur, 8.0 * s, 2.6 * s, 0.05)).id();
+        commands.entity(tstrip).insert(Transform::from_xyz(-4.0 * s, 0.0, 0.05));
+        commands.entity(tail).add_child(tstrip);
+
+        let weapon = commands.spawn((Transform::default(), Visibility::Hidden)).id();
+        let flash = commands.spawn((Transform::default(), Visibility::Hidden)).id();
+        commands
+            .entity(body)
+            .add_children(&[arm_l, arm_r, leg_l, leg_r, torso, head, tail]);
+        commands.entity(root).add_children(&[shadow, body, weapon, flash]);
+        commands.entity(root).insert(Rig {
+            body,
+            shadow,
+            torso,
+            head,
+            arm_l,
+            arm_r,
+            leg_l,
+            leg_r,
+            weapon,
+            flash,
+        });
+        commands.entity(root).insert(ZombieLimbs {
+            fore_l,
+            fore_r,
+            shin_l,
+            shin_r,
+            tatters: Some(tail),
+        });
+        return;
+    }
+
     // Contact shadow — flatter and longer for a body dragging on the ground.
     let (shw, shh) = if crawler { (42.0, 18.0) } else { (34.0, 24.0) };
     let shadow = commands
@@ -1509,6 +1616,69 @@ pub fn animate_zombies(
             if let Ok(mut h) = tf_q.get_mut(rig.head) {
                 h.translation.x = (4.0 + 2.0 * fall) * s;
                 h.translation.y = sgn * 3.0 * fall * s;
+            }
+            continue;
+        }
+
+        // ---- Zombie dog: a four-legged bound. Front pair and back pair swing in
+        // opposite phase, the body stretches and gathers, and the tail whips. ----
+        if z.kind == crate::enemy::ZKind::Dog {
+            let g = z.frame * 2.2;
+            let front = g.sin();
+            let back = (g + std::f32::consts::PI * 0.5).sin();
+            let bound = g.sin();
+            if let Ok(mut b) = tf_q.get_mut(rig.body) {
+                b.rotation = Quat::from_rotation_z(z.angle + (z.frame * 3.0).sin() * 0.05);
+                b.scale = if moving {
+                    Vec3::new(1.0 + 0.08 * bound, 1.0 - 0.05 * bound, 1.0)
+                } else {
+                    Vec3::ONE
+                };
+            }
+            let sw = if moving { 1.0 } else { 0.15 };
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_l) {
+                a.translation = Vec3::new(7.0 * s, 4.5 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(front * 0.9 * sw);
+            }
+            if let Ok(mut a) = tf_q.get_mut(rig.arm_r) {
+                a.translation = Vec3::new(7.0 * s, -4.5 * s, 0.1);
+                a.rotation = Quat::from_rotation_z(front * 0.9 * sw);
+            }
+            if let Ok(mut l) = tf_q.get_mut(rig.leg_l) {
+                l.translation = Vec3::new(-8.0 * s, 4.5 * s, -0.1);
+                l.rotation = Quat::from_rotation_z(back * 0.9 * sw);
+            }
+            if let Ok(mut r) = tf_q.get_mut(rig.leg_r) {
+                r.translation = Vec3::new(-8.0 * s, -4.5 * s, -0.1);
+                r.rotation = Quat::from_rotation_z(back * 0.9 * sw);
+            }
+            set_bend(&mut tf_q, limbs.fore_l, -0.5 - front.max(0.0) * 0.6 * sw);
+            set_bend(&mut tf_q, limbs.fore_r, -0.5 - front.max(0.0) * 0.6 * sw);
+            set_bend(&mut tf_q, limbs.shin_l, -0.5 - back.max(0.0) * 0.6 * sw);
+            set_bend(&mut tf_q, limbs.shin_r, -0.5 - back.max(0.0) * 0.6 * sw);
+            if let Ok(mut h) = tf_q.get_mut(rig.head) {
+                h.translation.x = 12.0 * s;
+                h.translation.y = bound * 0.6 * s;
+            }
+            if let Some(tail) = limbs.tatters {
+                set_bend(&mut tf_q, tail, (z.frame * 6.0).sin() * 0.6);
+            }
+            // Hurt flash / burning char still applies below via the shared block,
+            // but skip the humanoid gait — jump past it.
+            let flash = (z.hurt_flash * 8.0).clamp(0.0, 1.0);
+            let charred = if z.burning > 0.0 { 0.65 } else { 0.0 };
+            let char_col = Color::srgb(0.07, 0.05, 0.05);
+            let hp = (z.hp / z.max_hp).clamp(0.0, 1.0);
+            let darken = 0.55 + 0.45 * hp;
+            let bc = z.look.shirt.to_srgba();
+            let base = Color::srgb(bc.red * darken, bc.green * darken, bc.blue * darken);
+            if let Ok(mut sp) = sprite_q.get_mut(rig.torso) {
+                sp.color = mix(mix(base, char_col, charred), Color::WHITE, flash);
+            }
+            if let Ok(mut sp) = sprite_q.get_mut(rig.head) {
+                let sk = z.look.skin.to_srgba();
+                let skb = Color::srgb(sk.red * darken, sk.green * darken, sk.blue * darken);
+                sp.color = mix(mix(skb, char_col, charred), Color::WHITE, flash);
             }
             continue;
         }
