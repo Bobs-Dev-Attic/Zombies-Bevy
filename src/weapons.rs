@@ -8,6 +8,7 @@ pub enum WeaponKind {
     Launcher,
     Sxs, // side-by-side (break-action) shotgun
     Magnum, // .357 revolver
+    Flamethrower,
 }
 
 impl WeaponKind {
@@ -22,12 +23,13 @@ impl WeaponKind {
             WeaponKind::Launcher => 5,
             WeaponKind::Sxs => 6,
             WeaponKind::Magnum => 7,
+            WeaponKind::Flamethrower => 8,
         }
     }
 }
 
 /// Number of distinct weapon-kind visual slots.
-pub const WEAPON_KINDS: usize = 8;
+pub const WEAPON_KINDS: usize = 9;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Ammo {
@@ -35,6 +37,7 @@ pub enum Ammo {
     Rounds,
     Shells,
     Rockets,
+    Fuel,
 }
 
 #[derive(Clone, Copy)]
@@ -264,6 +267,28 @@ pub const WEAPONS: &[Weapon] = &[
         pierce: 1,
         wall_pierce: 0,
         falloff: 0.75,
+    },
+    Weapon {
+        name: "Flamethrower",
+        kind: WeaponKind::Flamethrower,
+        damage: 6.0, // per tick; the burning damage-over-time does the real work
+        rate: 16.0,
+        auto: true,
+        clip: 100, // fuel in the tank
+        reload: 2.6,
+        pellets: 0, // handled specially — sprays flame in a cone, no projectiles
+        spread: 0.0,
+        range: 150.0, // cone reach
+        speed: 0.0,
+        knockback: 12.0,
+        sever: 0.0,
+        explosive: 0.0,
+        ammo: Ammo::Fuel,
+        reach: 0.0,
+        ricochet: 0,
+        pierce: 0,
+        wall_pierce: 0,
+        falloff: 1.0,
     },
 ];
 

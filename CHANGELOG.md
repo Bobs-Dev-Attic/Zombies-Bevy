@@ -4,6 +4,26 @@ All notable changes to **Zombies: Escape the Horde (Bevy edition)** are recorded
 here. Versions follow the `MAJOR.MINOR.PATCH` scheme and match the version in
 `Cargo.toml` (shown on the loading screen, the menu, and the in-game corner tag).
 
+## [0.21.0]
+
+### Added
+- **Flamethrower** — a fuel-burning weapon that sprays a cone of fire from the
+  nozzle. Select it with `0` or the scroll wheel; hold to fire. Runs on a fuel
+  tank (shown on the HUD).
+- **Zombies catch fire** — anything caught in the flames ignites: it chars black,
+  throws flame and smoke, and takes burning damage over time. A zombie killed by
+  fire **crumbles into a smoldering ash pile** (scorched ground, ash, bone bits and
+  glowing embers) instead of a bloody corpse.
+
+### Changed
+- **Ejected shells bounce off walls** — spent casings and side-by-side shells now
+  tumble across the floor, ricochet off walls (losing energy), spin, settle, and
+  fade instead of drifting straight through.
+
+_Note: this is the first slice of a larger batch — scenes (house/neighborhood/
+park), props (furniture, vehicles, trees, bushes) and zombie dogs/cats are coming
+in follow-up updates._
+
 ## [0.20.0]
 
 ### Added

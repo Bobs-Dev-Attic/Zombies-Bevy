@@ -40,6 +40,60 @@ pub struct Decal {
     pub life: f32,
 }
 
+/// An ejected shell/casing that tumbles across the floor, bounces off walls, and
+/// settles before fading out.
+#[derive(Component)]
+pub struct Casing {
+    pub vel: Vec2,
+    pub life: f32,
+    pub spin: f32,
+}
+
+/// Move ejected casings: friction settles them, walls bounce them (losing energy),
+/// and they fade over the last part of their life.
+pub fn casing_system(
+    time: Res<Time>,
+    world: Res<World>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Casing, &mut Transform, &mut Sprite)>,
+) {
+    let dt = time.delta_secs();
+    for (e, mut c, mut tf, mut sprite) in q.iter_mut() {
+        c.life -= dt;
+        if c.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        // Floor friction brings it to rest.
+        let fr = (1.0 - dt * 3.5).clamp(0.0, 1.0);
+        c.vel *= fr;
+        let prev = tf.translation.truncate();
+        let next = prev + c.vel * dt;
+        if world.blocks_point(next) {
+            // Reflect off whichever wall face it crossed, losing half its speed.
+            let hit_x = world.blocks_point(Vec2::new(next.x, prev.y));
+            let hit_y = world.blocks_point(Vec2::new(prev.x, next.y));
+            if hit_x && !hit_y {
+                c.vel.x = -c.vel.x * 0.5;
+            } else if hit_y && !hit_x {
+                c.vel.y = -c.vel.y * 0.5;
+            } else {
+                c.vel = -c.vel * 0.5;
+            }
+            c.spin = -c.spin * 0.6;
+            // Stay at the previous spot this frame (backed out of the wall).
+        } else {
+            tf.translation.x = next.x;
+            tf.translation.y = next.y;
+        }
+        tf.rotation *= Quat::from_rotation_z(c.spin * dt);
+        // Fade out over the final stretch.
+        let a = (c.life / 0.5).clamp(0.0, 1.0);
+        let col = sprite.color.to_srgba();
+        sprite.color = Color::srgba(col.red, col.green, col.blue, a);
+    }
+}
+
 /// A single crisp square of the pixelated muzzle flash. Snaps through a couple
 /// of frames then vanishes (no fade to a gradient — it "flashes").
 #[derive(Component)]
@@ -444,6 +498,70 @@ pub fn firing_system(
         return;
     }
 
+    if w.kind == WeaponKind::Flamethrower {
+        // Continuous fire: spend a unit of fuel, spray a cone of flame from the
+        // nozzle, and set alight any zombie caught in it (the burn does the work).
+        let slot = p.current;
+        p.clip[slot] -= 1;
+        p.recoil = 0.25;
+        p.muzzle = 0.05;
+        shake.add(0.03);
+        let mut rng = rand::thread_rng();
+        let fwd = Vec2::new(angle.cos(), angle.sin());
+        // Flame tongues licking forward, hot at the root and deep orange at the tip.
+        for _ in 0..7 {
+            let a = angle + rng.gen_range(-0.26..0.26);
+            let reach = rng.gen_range(0.15..1.0) * w.range;
+            let at = muzzle + Vec2::new(a.cos(), a.sin()) * reach;
+            let t = reach / w.range;
+            let col = if t < 0.35 {
+                Color::srgb(1.0, 0.92, 0.55)
+            } else if t < 0.7 {
+                Color::srgb(1.0, 0.6, 0.2)
+            } else {
+                Color::srgb(0.9, 0.3, 0.12)
+            };
+            spawn_particle(
+                &mut commands,
+                at,
+                Vec2::new(a.cos(), a.sin()) * rng.gen_range(120.0..240.0),
+                col,
+                rng.gen_range(5.0..11.0),
+                rng.gen_range(0.18..0.4),
+                0.0,
+            );
+        }
+        // Dark smoke rolling off the far end of the jet.
+        if rng.gen_bool(0.5) {
+            let g = rng.gen_range(0.12..0.2);
+            spawn_particle(
+                &mut commands,
+                muzzle + fwd * w.range * 0.6,
+                Vec2::new(fwd.x * 40.0, 45.0),
+                Color::srgba(g, g, g, 0.6),
+                rng.gen_range(6.0..12.0),
+                rng.gen_range(0.4..0.8),
+                0.0,
+            );
+        }
+        // Ignite + singe every zombie in the forward cone.
+        for (mut z, ztf) in zombies.iter_mut() {
+            let d = ztf.translation.truncate() - pos;
+            let dist = d.length();
+            if dist < w.range + z.r {
+                let ad = (d.y.atan2(d.x) - angle).rem_euclid(TAU);
+                let ad = if ad > std::f32::consts::PI { ad - TAU } else { ad };
+                if ad.abs() < 0.45 {
+                    z.hp -= w.damage;
+                    z.hurt_flash = 0.05;
+                    z.burning = z.burning.max(3.0);
+                    z.apply_knockback(angle, w.knockback);
+                }
+            }
+        }
+        return;
+    }
+
     // Ranged: consume ammo, recoil, muzzle, casing, projectiles.
     let slot = p.current;
     // The side-by-side fires BOTH barrels in a single pull — it dumps every
@@ -469,20 +587,18 @@ pub fn firing_system(
         let fwd = Vec2::new(angle.cos(), angle.sin());
         let side = Vec2::new((angle + std::f32::consts::FRAC_PI_2).cos(), (angle + std::f32::consts::FRAC_PI_2).sin());
         let eject = pos + fwd * 26.0 + side * 4.0;
+        let brass = Color::srgb(0.78, 0.62, 0.22);
         commands.spawn((
-            Sprite::from_color(Color::srgb(0.78, 0.62, 0.22), Vec2::new(3.0, 1.6)),
+            Sprite::from_color(brass, Vec2::new(3.0, 1.6)),
             Transform {
                 translation: Vec3::new(eject.x, eject.y, Z_PARTICLE),
                 rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
                 ..default()
             },
-            Particle {
+            Casing {
                 vel: Vec2::new(ca.cos(), ca.sin()) * rng.gen_range(150.0..260.0),
-                life: 0.9,
-                max_life: 0.9,
-                drag: 0.94,
-                gravity: 0.0,
-                base: Color::srgb(0.78, 0.62, 0.22),
+                life: 1.6,
+                spin: rng.gen_range(-24.0..24.0),
             },
         ));
     }
@@ -627,13 +743,10 @@ pub fn reload_fx(
                     rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
                     ..default()
                 },
-                Particle {
+                Casing {
                     vel: Vec2::new(a.cos(), a.sin()) * rng.gen_range(140.0..230.0),
-                    life: 0.9,
-                    max_life: 0.9,
-                    drag: 0.93,
-                    gravity: 0.0,
-                    base: shell,
+                    life: 1.7,
+                    spin: rng.gen_range(-20.0..20.0),
                 },
             ));
         }
@@ -1249,12 +1362,18 @@ pub fn zombie_death_system(
                 -Vec2::new(z.angle.cos(), z.angle.sin())
             };
             z.knock += dir * rng.gen_range(40.0..130.0);
-            // A wet burst on death: blood sprays and organs/bone chunks fly out.
             let pos = tf.translation.truncate();
             let ga = dir.y.atan2(dir.x);
-            let amount = (12.0 * z.gore) as u32 + if z.headshot { 8 } else { 0 };
-            blood_burst(&mut commands, pos, ga, amount);
-            gib_spray(&mut commands, pos, ga, &z, &mut rng);
+            // A body killed by fire crumbles to ash with a puff of embers rather
+            // than bursting in a wet spray of blood and guts.
+            z.ash = z.burning > 0.0;
+            if z.ash {
+                ember_burst(&mut commands, pos, &mut rng);
+            } else {
+                let amount = (12.0 * z.gore) as u32 + if z.headshot { 8 } else { 0 };
+                blood_burst(&mut commands, pos, ga, amount);
+                gib_spray(&mut commands, pos, ga, &z, &mut rng);
+            }
             // Score + kill credit, once.
             score.kills += 1;
             score.points += z.score;
@@ -1273,8 +1392,10 @@ pub fn zombie_death_system(
         tf.translation.y = resolved.y;
         tf.translation.z = depth_z(Z_CHAR, resolved.y) - 0.002;
 
-        // Dribble blood/guts along the slide during the first part of the fall.
-        if z.death_t < DEATH_DUR * 0.8 && rng.gen_bool(0.5) {
+        // Dribble blood/guts along the slide during the first part of the fall
+        // (not for a body that's burning away — it trails embers, handled by the
+        // burn FX instead).
+        if !z.ash && z.death_t < DEATH_DUR * 0.8 && rng.gen_bool(0.5) {
             let sz: f32 = rng.gen_range(4.0..9.0);
             let o = Vec2::new(rng.gen_range(-6.0..6.0), rng.gen_range(-6.0..6.0));
             commands.spawn((
@@ -1288,19 +1409,23 @@ pub fn zombie_death_system(
             ));
         }
 
-        // Fall finished: lay the detailed corpse (at the angle it toppled) and
-        // remove the actor.
+        // Fall finished: lay the corpse (a bloody sprawl, or a smoldering ash pile
+        // if it burned) at the angle it toppled, and remove the actor.
         if z.death_t >= DEATH_DUR {
-            spawn_kill_corpse(
-                &mut commands,
-                &art,
-                resolved,
-                z.angle + z.death_spin,
-                &z.look,
-                z.r / 12.0,
-                z.headshot,
-                &mut rng,
-            );
+            if z.ash {
+                spawn_ash_pile(&mut commands, &art, resolved, z.r / 12.0, &mut rng);
+            } else {
+                spawn_kill_corpse(
+                    &mut commands,
+                    &art,
+                    resolved,
+                    z.angle + z.death_spin,
+                    &z.look,
+                    z.r / 12.0,
+                    z.headshot,
+                    &mut rng,
+                );
+            }
             commands.entity(e).despawn();
         }
     }
@@ -1353,4 +1478,111 @@ fn gib_spray(commands: &mut Commands, pos: Vec2, dir: f32, z: &Zombie, rng: &mut
             base: Color::srgb(0.86, 0.83, 0.74),
         },
     ));
+}
+
+/// A puff of glowing embers + smoke thrown off a body that burned up.
+fn ember_burst(commands: &mut Commands, pos: Vec2, rng: &mut impl Rng) {
+    for _ in 0..14 {
+        let a = rng.gen_range(0.0..TAU);
+        let sp = rng.gen_range(40.0..180.0);
+        let hot = if rng.gen_bool(0.5) {
+            Color::srgb(1.0, 0.55, 0.15)
+        } else {
+            Color::srgb(1.0, 0.8, 0.3)
+        };
+        commands.spawn((
+            Sprite::from_color(hot, Vec2::splat(rng.gen_range(2.0..4.0))),
+            Transform::from_xyz(pos.x, pos.y, Z_FX - 1.0),
+            Particle {
+                vel: Vec2::new(a.cos() * sp, a.sin() * sp * 0.5 + rng.gen_range(20.0..70.0)),
+                life: rng.gen_range(0.4..0.9),
+                max_life: 0.9,
+                drag: 0.9,
+                gravity: 0.0,
+                base: hot,
+            },
+        ));
+    }
+    for _ in 0..6 {
+        let g = rng.gen_range(0.1..0.2);
+        let smoke = Color::srgba(g, g, g, 0.7);
+        commands.spawn((
+            Sprite::from_color(smoke, Vec2::splat(rng.gen_range(5.0..10.0))),
+            Transform::from_xyz(pos.x, pos.y, Z_FX - 1.5),
+            Particle {
+                vel: Vec2::new(rng.gen_range(-16.0..16.0), 30.0 + rng.gen_range(0.0..40.0)),
+                life: rng.gen_range(0.7..1.4),
+                max_life: 1.4,
+                drag: 0.94,
+                gravity: 0.0,
+                base: smoke,
+            },
+        ));
+    }
+}
+
+/// A smoldering ash pile left where a zombie burned up: charred blobs, a scorch
+/// mark, a scatter of bone, and a few lingering embers that fade.
+fn spawn_ash_pile(commands: &mut Commands, art: &crate::art::Art, pos: Vec2, scale: f32, rng: &mut impl Rng) {
+    let s = scale;
+    let life = 30.0;
+    // Scorched ground.
+    commands.spawn((
+        Sprite {
+            image: art.soft.clone(),
+            color: Color::srgba(0.05, 0.04, 0.04, 0.75),
+            custom_size: Some(Vec2::splat(40.0 * s)),
+            ..default()
+        },
+        Transform::from_xyz(pos.x, pos.y, Z_DECAL + 1.5),
+        Decal { life },
+    ));
+    // Ash + charred flesh blobs.
+    for _ in 0..rng.gen_range(7..12) {
+        let o = Vec2::new(rng.gen_range(-11.0..11.0), rng.gen_range(-11.0..11.0)) * s;
+        let g = rng.gen_range(0.06..0.18);
+        commands.spawn((
+            Sprite::from_color(
+                Color::srgb(g, g * 0.9, g * 0.85),
+                Vec2::splat(rng.gen_range(4.0..9.0) * s),
+            ),
+            Transform {
+                translation: Vec3::new(pos.x + o.x, pos.y + o.y, Z_DECAL + 2.0 + rng.gen_range(0.0..0.4)),
+                rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+                ..default()
+            },
+            Decal { life },
+        ));
+    }
+    // A few pale bone bits poking out of the ash.
+    let bone = Color::srgb(0.7, 0.67, 0.6);
+    for _ in 0..rng.gen_range(2..5) {
+        let o = Vec2::new(rng.gen_range(-8.0..8.0), rng.gen_range(-8.0..8.0)) * s;
+        commands.spawn((
+            Sprite::from_color(bone, Vec2::new(rng.gen_range(3.0..5.0) * s, 1.4 * s)),
+            Transform {
+                translation: Vec3::new(pos.x + o.x, pos.y + o.y, Z_DECAL + 2.5),
+                rotation: Quat::from_rotation_z(rng.gen_range(0.0..TAU)),
+                ..default()
+            },
+            Decal { life },
+        ));
+    }
+    // Lingering embers glowing in the ash.
+    for _ in 0..8 {
+        let o = Vec2::new(rng.gen_range(-10.0..10.0), rng.gen_range(-10.0..10.0)) * s;
+        let hot = Color::srgb(1.0, rng.gen_range(0.4..0.6), 0.15);
+        commands.spawn((
+            Sprite::from_color(hot, Vec2::splat(rng.gen_range(1.5..3.0))),
+            Transform::from_xyz(pos.x + o.x, pos.y + o.y, Z_FX - 2.0),
+            Particle {
+                vel: Vec2::new(rng.gen_range(-6.0..6.0), rng.gen_range(6.0..24.0)),
+                life: rng.gen_range(0.8..2.2),
+                max_life: 2.2,
+                drag: 0.96,
+                gravity: 0.0,
+                base: hot,
+            },
+        ));
+    }
 }
